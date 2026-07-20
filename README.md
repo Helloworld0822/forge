@@ -40,7 +40,7 @@ Supported platforms: Linux, macOS, Windows 10+.
 ## Self-hosting bootstrap
 
 ```bash
-cmake --build build --target forge-selfhost forge-selfhost-test
+cmake --build build --target forge-selfhost forge-selfhost-test forge-selfhost-verify
 ```
 
 Pipeline:
@@ -50,6 +50,8 @@ Pipeline:
 | 0 | `build/bin/forge` (C) | `bootstrap/compiler.fg` → `forge-stage1` |
 | 1 | `build/bin/forge-stage1` | `compiler.fg` → `forge-stage2.c` |
 | 2 | `build/bin/forge-stage2` | self + `examples/match.fg` |
+
+`forge-selfhost-verify` builds stage3 from stage2 output and checks that recompiling `compiler.fg` yields identical C (fixed point).
 
 Verify stage2 compiles itself:
 
@@ -113,15 +115,31 @@ python3 benchmark/python/server.py   # port 19081
 curl http://127.0.0.1:19081/
 ```
 
-## HTTP Benchmark (Forge vs Python)
+**Phoenix** (Elixir, see `benchmark/phoenix/run_server.sh`):
+
+```bash
+./benchmark/phoenix/run_server.sh   # port 19082 (requires Erlang + Elixir)
+curl http://127.0.0.1:19082/
+```
+
+**Rust Axum** (see `benchmark/axum/run_server.sh`):
+
+```bash
+./benchmark/axum/run_server.sh   # port 19083 (requires Rust/cargo)
+curl http://127.0.0.1:19083/
+```
+
+## HTTP Benchmark (Forge vs Python vs Phoenix vs Rust Axum)
 
 Both servers return `Hello, World` (13 bytes) with `Connection: close`.  
 Benchmark uses **1,000,000 requests** at **1,000 concurrent** connections on Linux.
 
 | Implementation | Port | Requests/sec | Notes |
 |----------------|------|--------------|-------|
-| **Forge** (AOT native, epoll + REUSEPORT + connection pool) | 19080 | **~12,300** | `benchmark/forge/bench_server.fg` |
-| **Python 3** (stdlib socket) | 19081 | **~8,400** | `benchmark/python/server.py` |
+| **Forge** (AOT native, epoll + REUSEPORT + connection pool) | 19080 | **~12,600** | `benchmark/forge/bench_server.fg` |
+| **Rust** (Axum, release) | 19083 | **~8,000** | `benchmark/axum/bench_server` |
+| **Python 3** (stdlib socket) | 19081 | **~7,700** | `benchmark/python/server.py` |
+| **Phoenix** (Bandit, minimal router) | 19082 | **~7,500** | `benchmark/phoenix/bench_server` |
 
 Measured on: Linux 7.1.2-arch3-1 x86_64 (2026-07-20). Results vary ±5% run-to-run.
 
@@ -157,7 +175,7 @@ cmake --build build --target bench_server
 ./benchmark/run_benchmark.sh
 ```
 
-Ensure ports **19080** and **19081** are free before running (`fuser -k 19080/tcp 19081/tcp` if a prior run left servers behind).
+Ensure ports **19080**–**19083** are free before running (`fuser -k 19080/tcp 19081/tcp 19082/tcp 19083/tcp` if a prior run left servers behind).
 
 Results are written to `benchmark/results.txt` (gitignored).
 
@@ -303,9 +321,11 @@ forge/
 ├── include/        # runtime and stdlib headers
 ├── libs/           # sample user libraries
 ├── examples/       # example programs
-├── benchmark/      # Forge vs Python HTTP benchmark
+├── benchmark/      # Forge vs Python vs Phoenix vs Rust Axum HTTP benchmark
 │   ├── forge/      # Forge benchmark server (.fg)
-│   └── python/     # Python benchmark server (.py)
+│   ├── python/     # Python benchmark server (.py)
+│   ├── phoenix/    # Phoenix (Bandit) benchmark server
+│   └── axum/       # Rust Axum benchmark server
 ├── cmake/          # CMake helpers
 └── docs/           # design documents
 ```
