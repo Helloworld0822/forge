@@ -3,9 +3,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(FORGE_OS_WINDOWS)
-/* winsock via platform.h */
-#else
+#if !defined(FORGE_OS_WINDOWS)
+#ifndef SO_REUSEPORT
+#define SO_REUSEPORT 15
+#endif
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -25,11 +26,22 @@ static int set_reuseaddr(fr_socket_t fd) {
 #endif
 }
 
-int64_t fr_tcp_listen(int64_t port) {
+static int set_reuseport(fr_socket_t fd) {
+#if defined(FORGE_OS_LINUX) || defined(FORGE_OS_MACOS)
+    int yes = 1;
+    return setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes));
+#else
+    (void)fd;
+    return 0;
+#endif
+}
+
+static int64_t tcp_listen_common(int64_t port, int reuseport) {
     fr_platform_init();
     fr_socket_t fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (fd == FR_SOCK_INVALID) return -1;
-    set_reuseaddr((int)fd);
+    set_reuseaddr(fd);
+    if (reuseport) set_reuseport(fd);
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
@@ -38,6 +50,14 @@ int64_t fr_tcp_listen(int64_t port) {
     if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) { fr_sock_close(fd); return -1; }
     if (listen(fd, 512) < 0) { fr_sock_close(fd); return -1; }
     return (int64_t)fd;
+}
+
+int64_t fr_tcp_listen(int64_t port) {
+    return tcp_listen_common(port, 0);
+}
+
+int64_t fr_tcp_listen_reuseport(int64_t port) {
+    return tcp_listen_common(port, 1);
 }
 
 int64_t fr_tcp_accept(int64_t sock) {
