@@ -1,5 +1,5 @@
-#ifndef HYLO_LEXER_H
-#define HYLO_LEXER_H
+#ifndef FORGE_LEXER_H
+#define FORGE_LEXER_H
 
 #include "common.h"
 
@@ -32,7 +32,7 @@ typedef enum {
 
 typedef struct {
     TokenKind kind;
-    HyloStr lexeme;
+    ForgeStr lexeme;
     int64_t int_val;
     double float_val;
     int line;

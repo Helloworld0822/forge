@@ -6,7 +6,7 @@ typedef struct {
 
 static void parser_error(Parser *p, const char *msg) {
     Token t = lexer_peek(p->lx);
-    fprintf(stderr, "hylo: parse error at %d:%d: %s\n", t.line, t.col, msg);
+    fprintf(stderr, "forge: parse error at %d:%d: %s\n", t.line, t.col, msg);
     exit(1);
 }
 
@@ -16,21 +16,21 @@ static void expect(Parser *p, TokenKind kind) {
     }
 }
 
-static HyloStr token_str(Token t) {
+static ForgeStr token_str(Token t) {
     return t.lexeme;
 }
 
-static HyloType parse_type(Parser *p) {
+static ForgeType parse_type(Parser *p) {
     Token t = lexer_peek(p->lx);
     switch (t.kind) {
-    case TOK_KW_INT: lexer_next(p->lx); return hylo_type_int();
-    case TOK_KW_FLOAT: lexer_next(p->lx); return hylo_type_float();
-    case TOK_KW_BOOL: lexer_next(p->lx); return hylo_type_bool();
-    case TOK_KW_STRING: lexer_next(p->lx); return hylo_type_string();
-    case TOK_KW_VOID: lexer_next(p->lx); return hylo_type_void();
+    case TOK_KW_INT: lexer_next(p->lx); return forge_type_int();
+    case TOK_KW_FLOAT: lexer_next(p->lx); return forge_type_float();
+    case TOK_KW_BOOL: lexer_next(p->lx); return forge_type_bool();
+    case TOK_KW_STRING: lexer_next(p->lx); return forge_type_string();
+    case TOK_KW_VOID: lexer_next(p->lx); return forge_type_void();
     default:
         parser_error(p, "expected type");
-        return hylo_type_void();
+        return forge_type_void();
     }
 }
 
@@ -64,7 +64,7 @@ static Expr *parse_primary(Parser *p) {
         lexer_next(p->lx);
         return expr_string(token_str(t));
     case TOK_IDENT: {
-        HyloStr name = token_str(t);
+        ForgeStr name = token_str(t);
         lexer_next(p->lx);
         if (lexer_match(p->lx, TOK_DOT)) {
             Token fn = lexer_peek(p->lx);
@@ -200,7 +200,7 @@ static Stmt *parse_stmt(Parser *p) {
         if (mut) lexer_next(p->lx);
         Token name = lexer_peek(p->lx);
         expect(p, TOK_IDENT);
-        HyloType ty = hylo_type_int();
+        ForgeType ty = forge_type_int();
         if (lexer_match(p->lx, TOK_COLON)) ty = parse_type(p);
         Expr *init = NULL;
         if (lexer_match(p->lx, TOK_EQ)) init = parse_expr(p);
@@ -320,7 +320,7 @@ static Param *parse_params(Parser *p) {
         Token name = lexer_peek(p->lx);
         expect(p, TOK_IDENT);
         expect(p, TOK_COLON);
-        HyloType ty = parse_type(p);
+        ForgeType ty = parse_type(p);
         Param *param = (Param *)calloc(1, sizeof(Param));
         param->name = token_str(name);
         param->type = ty;
@@ -336,7 +336,7 @@ static FnDecl parse_fn_body(Parser *p) {
     expect(p, TOK_IDENT);
     expect(p, TOK_LPAREN);
     Param *params = parse_params(p);
-    HyloType ret = hylo_type_void();
+    ForgeType ret = forge_type_void();
     if (lexer_match(p->lx, TOK_COLON)) ret = parse_type(p);
     Block *body = parse_block(p);
     FnDecl fn = { token_str(name), params, ret, *body };
@@ -388,7 +388,7 @@ static ProcessDecl parse_process(Parser *p) {
             Token param = lexer_peek(p->lx);
             expect(p, TOK_IDENT);
             expect(p, TOK_COLON);
-            HyloType ty = parse_type(p);
+            ForgeType ty = parse_type(p);
             expect(p, TOK_RPAREN);
             proc.has_receive = true;
             proc.receive_param.name = token_str(param);
@@ -419,16 +419,16 @@ static SupervisorDecl parse_supervisor(Parser *p) {
             expect(p, TOK_COLON);
             Token pol = lexer_peek(p->lx);
             expect(p, TOK_IDENT);
-            if (hylo_str_eq(token_str(pol), hylo_str("coro"))) sup.policy = SUP_RESTART_CORO;
-            else if (hylo_str_eq(token_str(pol), hylo_str("all"))) sup.policy = SUP_RESTART_ALL;
+            if (forge_str_eq(token_str(pol), forge_str("coro"))) sup.policy = SUP_RESTART_CORO;
+            else if (forge_str_eq(token_str(pol), forge_str("all"))) sup.policy = SUP_RESTART_ALL;
             else sup.policy = SUP_RESTART_PROCESS;
             expect(p, TOK_SEMI);
         } else {
             Token child_tok = lexer_peek(p->lx);
             expect(p, TOK_IDENT);
-            HyloStr child = token_str(child_tok);
+            ForgeStr child = token_str(child_tok);
             sup.child_count++;
-            sup.children = (HyloStr *)realloc(sup.children, sup.child_count * sizeof(HyloStr));
+            sup.children = (ForgeStr *)realloc(sup.children, sup.child_count * sizeof(ForgeStr));
             sup.children[sup.child_count - 1] = child;
             expect(p, TOK_SEMI);
         }
@@ -453,7 +453,7 @@ static LibraryDecl parse_library(Parser *p) {
             expect(p, TOK_IDENT);
             expect(p, TOK_SEMI);
             lib.import_count++;
-            lib.imports = (HyloStr *)realloc(lib.imports, lib.import_count * sizeof(HyloStr));
+            lib.imports = (ForgeStr *)realloc(lib.imports, lib.import_count * sizeof(ForgeStr));
             lib.imports[lib.import_count - 1] = token_str(mod);
         } else if (lexer_match(p->lx, TOK_KW_EXPORT)) {
             expect(p, TOK_KW_FN);
@@ -481,7 +481,7 @@ Program parse_program(Lexer *lx) {
             expect(&p, TOK_IDENT);
             expect(&p, TOK_SEMI);
             prog.import_count++;
-            prog.imports = (HyloStr *)realloc(prog.imports, prog.import_count * sizeof(HyloStr));
+            prog.imports = (ForgeStr *)realloc(prog.imports, prog.import_count * sizeof(ForgeStr));
             prog.imports[prog.import_count - 1] = token_str(mod);
         } else if (t.kind == TOK_KW_LIBRARY) {
             if (prog.library.present) parser_error(&p, "only one library per file");

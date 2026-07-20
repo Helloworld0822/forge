@@ -9,14 +9,14 @@
 static char *read_file(const char *path, size_t *out_len) {
     FILE *f = fopen(path, "rb");
     if (!f) {
-        fprintf(stderr, "hylo: cannot open '%s'\n", path);
+        fprintf(stderr, "forge: cannot open '%s'\n", path);
         exit(1);
     }
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
     fseek(f, 0, SEEK_SET);
     char *buf = (char *)malloc((size_t)sz + 1);
-    if (!buf) hylo_die("out of memory");
+    if (!buf) forge_die("out of memory");
     size_t n = fread(buf, 1, (size_t)sz, f);
     buf[n] = '\0';
     fclose(f);
@@ -25,7 +25,7 @@ static char *read_file(const char *path, size_t *out_len) {
 }
 
 static void usage(const char *prog) {
-    fprintf(stderr, "Hylo %s - Hybrid Process + Coroutine language (AOT -> C)\n", HYLO_VERSION);
+    fprintf(stderr, "Forge %s - Hybrid Process + Coroutine language (AOT -> C)\n", FORGE_VERSION);
     fprintf(stderr, "Usage:\n");
     fprintf(stderr, "  %s <input.hy> [-o output.c] [-I include-dir]\n", prog);
     fprintf(stderr, "  %s --lib <input.hy> -o output.c --header output.h\n", prog);
@@ -61,7 +61,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (lib_mode && !header) {
-        fprintf(stderr, "hylo: library mode requires --header\n");
+        fprintf(stderr, "forge: library mode requires --header\n");
         return 1;
     }
 
@@ -74,16 +74,16 @@ int main(int argc, char **argv) {
 
     if (lib_mode) {
         if (!output) {
-            fprintf(stderr, "hylo: library mode requires -o\n");
+            fprintf(stderr, "forge: library mode requires -o\n");
             return 1;
         }
         FILE *out_c = fopen(output, "w");
         FILE *out_h = fopen(header, "w");
         if (!out_c || !out_h) {
-            fprintf(stderr, "hylo: cannot write library output\n");
+            fprintf(stderr, "forge: cannot write library output\n");
             return 1;
         }
-        codegen_emit_library(&prog, out_c, out_h, "hylo_runtime.h");
+        codegen_emit_library(&prog, out_c, out_h, "forge_runtime.h");
         fclose(out_c);
         fclose(out_h);
     } else {
@@ -91,12 +91,12 @@ int main(int argc, char **argv) {
         if (output) {
             out = fopen(output, "w");
             if (!out) {
-                fprintf(stderr, "hylo: cannot write '%s'\n", output);
+                fprintf(stderr, "forge: cannot write '%s'\n", output);
                 free(src);
                 return 1;
             }
         }
-        codegen_emit(&prog, out, "hylo_runtime.h");
+        codegen_emit(&prog, out, "forge_runtime.h");
         if (output) fclose(out);
     }
 

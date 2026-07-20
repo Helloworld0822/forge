@@ -1,56 +1,56 @@
 #include "ast.h"
 
-HyloType hylo_type_void(void) { return (HyloType){ TY_VOID }; }
-HyloType hylo_type_int(void) { return (HyloType){ TY_INT }; }
-HyloType hylo_type_float(void) { return (HyloType){ TY_FLOAT }; }
-HyloType hylo_type_bool(void) { return (HyloType){ TY_BOOL }; }
-HyloType hylo_type_string(void) { return (HyloType){ TY_STRING }; }
+ForgeType forge_type_void(void) { return (ForgeType){ TY_VOID }; }
+ForgeType forge_type_int(void) { return (ForgeType){ TY_INT }; }
+ForgeType forge_type_float(void) { return (ForgeType){ TY_FLOAT }; }
+ForgeType forge_type_bool(void) { return (ForgeType){ TY_BOOL }; }
+ForgeType forge_type_string(void) { return (ForgeType){ TY_STRING }; }
 
-HyloType hylo_type_from_name(HyloStr name) {
-    if (hylo_str_eq(name, hylo_str("int"))) return hylo_type_int();
-    if (hylo_str_eq(name, hylo_str("float"))) return hylo_type_float();
-    if (hylo_str_eq(name, hylo_str("bool"))) return hylo_type_bool();
-    if (hylo_str_eq(name, hylo_str("string"))) return hylo_type_string();
-    if (hylo_str_eq(name, hylo_str("void"))) return hylo_type_void();
-    return hylo_type_void();
+ForgeType forge_type_from_name(ForgeStr name) {
+    if (forge_str_eq(name, forge_str("int"))) return forge_type_int();
+    if (forge_str_eq(name, forge_str("float"))) return forge_type_float();
+    if (forge_str_eq(name, forge_str("bool"))) return forge_type_bool();
+    if (forge_str_eq(name, forge_str("string"))) return forge_type_string();
+    if (forge_str_eq(name, forge_str("void"))) return forge_type_void();
+    return forge_type_void();
 }
 
 static Expr *expr_new(ExprKind kind) {
     Expr *e = (Expr *)calloc(1, sizeof(Expr));
-    if (!e) hylo_die("out of memory");
+    if (!e) forge_die("out of memory");
     e->kind = kind;
     return e;
 }
 
 Expr *expr_int(int64_t v) {
     Expr *e = expr_new(EXPR_INT);
-    e->type = hylo_type_int();
+    e->type = forge_type_int();
     e->as.int_val = v;
     return e;
 }
 
 Expr *expr_float(double v) {
     Expr *e = expr_new(EXPR_FLOAT);
-    e->type = hylo_type_float();
+    e->type = forge_type_float();
     e->as.float_val = v;
     return e;
 }
 
 Expr *expr_bool(bool v) {
     Expr *e = expr_new(EXPR_BOOL);
-    e->type = hylo_type_bool();
+    e->type = forge_type_bool();
     e->as.bool_val = v;
     return e;
 }
 
-Expr *expr_string(HyloStr v) {
+Expr *expr_string(ForgeStr v) {
     Expr *e = expr_new(EXPR_STRING);
-    e->type = hylo_type_string();
+    e->type = forge_type_string();
     e->as.string_val = v;
     return e;
 }
 
-Expr *expr_ident(HyloStr name) {
+Expr *expr_ident(ForgeStr name) {
     Expr *e = expr_new(EXPR_IDENT);
     e->as.ident = name;
     return e;
@@ -65,7 +65,7 @@ Expr *expr_binary(BinOp op, Expr *l, Expr *r) {
     return e;
 }
 
-Expr *expr_call(HyloStr name, Expr **args, size_t n) {
+Expr *expr_call(ForgeStr name, Expr **args, size_t n) {
     Expr *e = expr_new(EXPR_CALL);
     e->as.call.name = name;
     e->as.call.args = args;
@@ -73,7 +73,7 @@ Expr *expr_call(HyloStr name, Expr **args, size_t n) {
     return e;
 }
 
-Expr *expr_qual_call(HyloStr module, HyloStr name, Expr **args, size_t n) {
+Expr *expr_qual_call(ForgeStr module, ForgeStr name, Expr **args, size_t n) {
     Expr *e = expr_new(EXPR_QUAL_CALL);
     e->as.qual_call.module = module;
     e->as.qual_call.name = name;
@@ -84,7 +84,7 @@ Expr *expr_qual_call(HyloStr module, HyloStr name, Expr **args, size_t n) {
 
 Expr *expr_recv(void) {
     Expr *e = expr_new(EXPR_RECV);
-    e->type = hylo_type_int();
+    e->type = forge_type_int();
     return e;
 }
 
@@ -103,12 +103,12 @@ void block_append(Block *b, Stmt *s) {
 
 static Stmt *stmt_new(int kind) {
     Stmt *s = (Stmt *)calloc(1, sizeof(Stmt));
-    if (!s) hylo_die("out of memory");
+    if (!s) forge_die("out of memory");
     s->kind = kind;
     return s;
 }
 
-Stmt *stmt_let(bool mut, HyloStr name, HyloType ty, Expr *init) {
+Stmt *stmt_let(bool mut, ForgeStr name, ForgeType ty, Expr *init) {
     Stmt *s = stmt_new(STMT_LET);
     s->as.let.mutable_ = mut;
     s->as.let.name = name;
@@ -144,7 +144,7 @@ Stmt *stmt_while(Expr *cond, Block *body) {
     return s;
 }
 
-Stmt *stmt_spawn(HyloStr name, Expr **args, size_t n) {
+Stmt *stmt_spawn(ForgeStr name, Expr **args, size_t n) {
     Stmt *s = stmt_new(STMT_SPAWN);
     s->as.spawn.coro_name = name;
     s->as.spawn.args = args;
@@ -164,7 +164,7 @@ Stmt *stmt_yield(void) {
     return stmt_new(STMT_YIELD);
 }
 
-Stmt *stmt_assign(HyloStr name, Expr *value) {
+Stmt *stmt_assign(ForgeStr name, Expr *value) {
     Stmt *s = stmt_new(STMT_ASSIGN);
     s->as.assign.name = name;
     s->as.assign.value = value;

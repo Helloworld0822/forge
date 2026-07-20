@@ -1,5 +1,5 @@
-#ifndef HYLO_CODEGEN_H
-#define HYLO_CODEGEN_H
+#ifndef FORGE_CODEGEN_H
+#define FORGE_CODEGEN_H
 
 #include "ast.h"
 #include <stdio.h>

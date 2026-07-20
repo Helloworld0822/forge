@@ -1,5 +1,5 @@
-#ifndef HYLO_AST_H
-#define HYLO_AST_H
+#ifndef FORGE_AST_H
+#define FORGE_AST_H
 
 #include "common.h"
 
@@ -9,11 +9,11 @@ typedef enum {
     TY_FLOAT,
     TY_BOOL,
     TY_STRING
-} HyloTypeKind;
+} ForgeTypeKind;
 
-typedef struct HyloType {
-    HyloTypeKind kind;
-} HyloType;
+typedef struct ForgeType {
+    ForgeTypeKind kind;
+} ForgeType;
 
 typedef enum {
     EXPR_INT,
@@ -41,26 +41,26 @@ typedef struct Field Field;
 
 struct Expr {
     ExprKind kind;
-    HyloType type;
+    ForgeType type;
     union {
         int64_t int_val;
         double float_val;
         bool bool_val;
-        HyloStr string_val;
-        HyloStr ident;
+        ForgeStr string_val;
+        ForgeStr ident;
         struct {
             BinOp op;
             Expr *left;
             Expr *right;
         } binary;
         struct {
-            HyloStr name;
+            ForgeStr name;
             Expr **args;
             size_t arg_count;
         } call;
         struct {
-            HyloStr module;
-            HyloStr name;
+            ForgeStr module;
+            ForgeStr name;
             Expr **args;
             size_t arg_count;
         } qual_call;
@@ -83,8 +83,8 @@ struct Stmt {
     union {
         struct {
             bool mutable_;
-            HyloStr name;
-            HyloType type;
+            ForgeStr name;
+            ForgeType type;
             Expr *init;
         } let;
         Expr *expr;
@@ -99,7 +99,7 @@ struct Stmt {
             Block *body;
         } while_stmt;
         struct {
-            HyloStr coro_name;
+            ForgeStr coro_name;
             Expr **args;
             size_t arg_count;
         } spawn;
@@ -109,7 +109,7 @@ struct Stmt {
             Expr *value;
         } send;
         struct {
-            HyloStr name;
+            ForgeStr name;
             Expr *value;
         } assign;
         Block *block;
@@ -123,26 +123,26 @@ struct Block {
 };
 
 struct Param {
-    HyloStr name;
-    HyloType type;
+    ForgeStr name;
+    ForgeType type;
     Param *next;
 };
 
 typedef struct {
-    HyloStr name;
+    ForgeStr name;
     Param *params;
-    HyloType ret_type;
+    ForgeType ret_type;
     Block body;
 } FnDecl;
 
 typedef struct {
-    HyloStr name;
+    ForgeStr name;
     Param *params;
     Block body;
 } CoroDecl;
 
 typedef struct {
-    HyloStr name;
+    ForgeStr name;
     Block body;
     CoroDecl *coros;
     size_t coro_count;
@@ -152,15 +152,15 @@ typedef struct {
 } ProcessDecl;
 
 typedef struct {
-    HyloStr name;
+    ForgeStr name;
     enum { SUP_RESTART_CORO, SUP_RESTART_PROCESS, SUP_RESTART_ALL } policy;
-    HyloStr *children;
+    ForgeStr *children;
     size_t child_count;
 } SupervisorDecl;
 
 typedef struct {
-    HyloStr name;
-    HyloStr *imports;
+    ForgeStr name;
+    ForgeStr *imports;
     size_t import_count;
     FnDecl *functions;
     size_t fn_count;
@@ -168,7 +168,7 @@ typedef struct {
 } LibraryDecl;
 
 typedef struct {
-    HyloStr *imports;
+    ForgeStr *imports;
     size_t import_count;
     LibraryDecl library;
     ProcessDecl *processes;
@@ -179,34 +179,34 @@ typedef struct {
     size_t supervisor_count;
 } Program;
 
-HyloType hylo_type_void(void);
-HyloType hylo_type_int(void);
-HyloType hylo_type_float(void);
-HyloType hylo_type_bool(void);
-HyloType hylo_type_string(void);
-HyloType hylo_type_from_name(HyloStr name);
+ForgeType forge_type_void(void);
+ForgeType forge_type_int(void);
+ForgeType forge_type_float(void);
+ForgeType forge_type_bool(void);
+ForgeType forge_type_string(void);
+ForgeType forge_type_from_name(ForgeStr name);
 
 Expr *expr_int(int64_t v);
 Expr *expr_float(double v);
 Expr *expr_bool(bool v);
-Expr *expr_string(HyloStr v);
-Expr *expr_ident(HyloStr name);
+Expr *expr_string(ForgeStr v);
+Expr *expr_ident(ForgeStr name);
 Expr *expr_binary(BinOp op, Expr *l, Expr *r);
-Expr *expr_call(HyloStr name, Expr **args, size_t n);
-Expr *expr_qual_call(HyloStr module, HyloStr name, Expr **args, size_t n);
+Expr *expr_call(ForgeStr name, Expr **args, size_t n);
+Expr *expr_qual_call(ForgeStr module, ForgeStr name, Expr **args, size_t n);
 Expr *expr_recv(void);
 
 Block block_new(void);
 void block_append(Block *b, Stmt *s);
-Stmt *stmt_let(bool mut, HyloStr name, HyloType ty, Expr *init);
+Stmt *stmt_let(bool mut, ForgeStr name, ForgeType ty, Expr *init);
 Stmt *stmt_expr(Expr *e);
 Stmt *stmt_return(Expr *e);
 Stmt *stmt_if(Expr *cond, Block *then_br, Block *else_br);
 Stmt *stmt_while(Expr *cond, Block *body);
-Stmt *stmt_spawn(HyloStr name, Expr **args, size_t n);
+Stmt *stmt_spawn(ForgeStr name, Expr **args, size_t n);
 Stmt *stmt_send(Expr *target, int tag, Expr *value);
 Stmt *stmt_yield(void);
-Stmt *stmt_assign(HyloStr name, Expr *value);
+Stmt *stmt_assign(ForgeStr name, Expr *value);
 Stmt *stmt_block(Block *b);
 
 void program_free(Program *p);

@@ -6,7 +6,7 @@ import json;
 import fs;
 
 process main {
-    let greeting: string = str_concat("Hello, ", "Hylo!");
+    let greeting: string = str_concat("Hello, ", "Forge!");
     println(greeting);
     println("len:", str_len(greeting));
     println("pow:", pow_i(2, 10));
@@ -15,11 +15,11 @@ process main {
     let now: int = time_now_ms();
     println("time:", now);
 
-    let payload: string = json_stringify_str("lang", "hylo");
+    let payload: string = json_stringify_str("lang", "forge");
     println(payload);
     println("json lang:", json_get_string(payload, "lang"));
 
-    fs_write("/tmp/hylo_demo.txt", "hylo stdlib");
-    let content: string = fs_read("/tmp/hylo_demo.txt");
+    fs_write("/tmp/forge_demo.txt", "forge stdlib");
+    let content: string = fs_read("/tmp/forge_demo.txt");
     println("fs:", content);
 }

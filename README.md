@@ -1,8 +1,8 @@
-# Hylo
+# Forge
 
 A **Hybrid Lightweight Process + Coroutine** language — an AOT-compiled language that combines Elixir/Erlang-style lightweight processes with coroutines.
 
-Hylo source (`.hy`) is compiled to C and then built into native binaries. It targets a predictable execution model without a garbage collector.
+Forge source (`.hy`) is compiled to C and then built into native binaries. It targets a predictable execution model without a garbage collector.
 
 ## Features
 
@@ -22,8 +22,8 @@ Hylo source (`.hy`) is compiled to C and then built into native binaries. It tar
 ## Build
 
 ```bash
-git clone https://github.com/Helloworld0822/hylo.git
-cd hylo
+git clone https://github.com/Helloworld0822/forge.git
+cd forge
 
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
@@ -42,7 +42,7 @@ cmake --build build
 
 ## Language Example
 
-```hylo
+```forge
 process main {
     coroutine worker(id: int) {
         println("start", id);
@@ -57,7 +57,7 @@ process main {
 
 ## Standard Modules
 
-Import modules with `import`. Standard modules are included in `libhylo_std`.
+Import modules with `import`. Standard modules are included in `libforge_std`.
 
 | Module | Description |
 |--------|-------------|
@@ -72,7 +72,7 @@ Import modules with `import`. Standard modules are included in `libhylo_std`.
 | `http` | `http_get`, `http_post`, `http_listen`, … |
 | `json` | `json_get_string`, `json_get_int`, … |
 
-```hylo
+```forge
 import io;
 import tcp;
 
@@ -86,7 +86,7 @@ process main {
 
 ### Define a Library
 
-```hylo
+```forge
 library greeting {
     import strings;
 
@@ -99,27 +99,27 @@ library greeting {
 ### Compile
 
 ```bash
-./build/bin/hylo --lib libs/greeting/greeting.hy \
+./build/bin/forge --lib libs/greeting/greeting.hy \
     -o greeting.c --header greeting.h
 ```
 
 ### Use
 
-```hylo
+```forge
 import greeting;
 
 process main {
-    println(greeting.hello("Hylo"));
+    println(greeting.hello("Forge"));
 }
 ```
 
-With CMake, use `hylo_add_library()` from `cmake/HyloLibrary.cmake`.
+With CMake, use `forge_add_library()` from `cmake/ForgeLibrary.cmake`.
 
 ## Project Structure
 
 ```
-hylo/
-├── compiler/       # Hylo compiler (lexer, parser, codegen)
+forge/
+├── compiler/       # Forge compiler (lexer, parser, codegen)
 ├── runtime/        # processes, coroutines, scheduler
 ├── stdlib/         # standard module C implementations
 ├── include/        # runtime and stdlib headers
@@ -133,10 +133,10 @@ hylo/
 
 ```bash
 # Generate C for an executable
-hylo app.hy -o app.c
+forge app.hy -o app.c
 
 # Generate C + header for a library
-hylo --lib lib.hy -o lib.c --header lib.h
+forge --lib lib.hy -o lib.c --header lib.h
 ```
 
 ## Contributing

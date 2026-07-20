@@ -3,7 +3,7 @@ import greeting;
 import mathutil;
 
 process main {
-    let msg: string = greeting.hello("Hylo");
+    let msg: string = greeting.hello("Forge");
     println(msg);
     println(greeting.shout("library"));
 

@@ -10,7 +10,7 @@ process main {
     let method: string = http_req_method(req);
     println(method, path);
 
-    let body: string = "Hello from Hylo HTTP server";
+    let body: string = "Hello from Forge HTTP server";
     http_respond(req, 200, body);
     http_close(req);
     http_server_close(server);

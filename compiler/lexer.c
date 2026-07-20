@@ -8,7 +8,7 @@ static bool is_ident(char c) {
     return is_ident_start(c) || isdigit((unsigned char)c);
 }
 
-static Token make_token(Lexer *lx, TokenKind kind, HyloStr lexeme) {
+static Token make_token(Lexer *lx, TokenKind kind, ForgeStr lexeme) {
   Token t = { kind, lexeme, 0, 0.0, lx->line, lx->col };
   return t;
 }
@@ -36,7 +36,7 @@ static void skip_ws(Lexer *lx) {
     }
 }
 
-static TokenKind keyword_kind(HyloStr s) {
+static TokenKind keyword_kind(ForgeStr s) {
     struct { const char *kw; TokenKind kind; } kws[] = {
         {"process", TOK_KW_PROCESS}, {"coroutine", TOK_KW_COROUTINE},
         {"supervisor", TOK_KW_SUPERVISOR}, {"spawn", TOK_KW_SPAWN},
@@ -54,8 +54,8 @@ static TokenKind keyword_kind(HyloStr s) {
         {"export", TOK_KW_EXPORT},
     };
     for (size_t i = 0; i < sizeof(kws) / sizeof(kws[0]); i++) {
-        HyloStr kw = hylo_str(kws[i].kw);
-        if (hylo_str_eq(s, kw)) return kws[i].kind;
+        ForgeStr kw = forge_str(kws[i].kw);
+        if (forge_str_eq(s, kw)) return kws[i].kind;
     }
     return TOK_IDENT;
 }
@@ -86,7 +86,7 @@ static Token read_number(Lexer *lx) {
             lx->col++;
         }
     }
-    HyloStr lex = { (char *)lx->src + start, lx->pos - start };
+    ForgeStr lex = { (char *)lx->src + start, lx->pos - start };
     char buf[64];
     size_t n = lex.len < 63 ? lex.len : 63;
     memcpy(buf, lex.data, n);
@@ -118,8 +118,8 @@ static Token read_string(Lexer *lx) {
         }
         lx->pos++;
     }
-    if (lx->pos >= lx->len) hylo_die("unterminated string");
-    HyloStr lex = { (char *)lx->src + start, lx->pos - start };
+    if (lx->pos >= lx->len) forge_die("unterminated string");
+    ForgeStr lex = { (char *)lx->src + start, lx->pos - start };
     lx->pos++;
     lx->col++;
     Token t = make_token(lx, TOK_STRING, lex);
@@ -135,7 +135,7 @@ static Token read_ident(Lexer *lx) {
         lx->pos++;
         lx->col++;
     }
-    HyloStr lex = { (char *)lx->src + start, lx->pos - start };
+    ForgeStr lex = { (char *)lx->src + start, lx->pos - start };
     TokenKind kind = keyword_kind(lex);
     Token t = make_token(lx, kind, lex);
     t.line = line;
@@ -149,7 +149,7 @@ Token lexer_next(Lexer *lx) {
         return lx->current;
     }
     skip_ws(lx);
-    if (lx->pos >= lx->len) return make_token(lx, TOK_EOF, hylo_str(""));
+    if (lx->pos >= lx->len) return make_token(lx, TOK_EOF, forge_str(""));
 
     char c = lx->src[lx->pos];
     int line = lx->line, col = lx->col;
@@ -162,61 +162,61 @@ Token lexer_next(Lexer *lx) {
     lx->col++;
 
     switch (c) {
-    case '(': return make_token(lx, TOK_LPAREN, hylo_str("("));
-    case ')': return make_token(lx, TOK_RPAREN, hylo_str(")"));
-    case '{': return make_token(lx, TOK_LBRACE, hylo_str("{"));
-    case '}': return make_token(lx, TOK_RBRACE, hylo_str("}"));
-    case '[': return make_token(lx, TOK_LBRACKET, hylo_str("["));
-    case ']': return make_token(lx, TOK_RBRACKET, hylo_str("]"));
-    case ',': return make_token(lx, TOK_COMMA, hylo_str(","));
-    case ':': return make_token(lx, TOK_COLON, hylo_str(":"));
-    case ';': return make_token(lx, TOK_SEMI, hylo_str(";"));
-    case '.': return make_token(lx, TOK_DOT, hylo_str("."));
-    case '+': return make_token(lx, TOK_PLUS, hylo_str("+"));
-    case '-': return make_token(lx, TOK_MINUS, hylo_str("-"));
-    case '*': return make_token(lx, TOK_STAR, hylo_str("*"));
-    case '/': return make_token(lx, TOK_SLASH, hylo_str("/"));
-    case '%': return make_token(lx, TOK_PERCENT, hylo_str("%"));
+    case '(': return make_token(lx, TOK_LPAREN, forge_str("("));
+    case ')': return make_token(lx, TOK_RPAREN, forge_str(")"));
+    case '{': return make_token(lx, TOK_LBRACE, forge_str("{"));
+    case '}': return make_token(lx, TOK_RBRACE, forge_str("}"));
+    case '[': return make_token(lx, TOK_LBRACKET, forge_str("["));
+    case ']': return make_token(lx, TOK_RBRACKET, forge_str("]"));
+    case ',': return make_token(lx, TOK_COMMA, forge_str(","));
+    case ':': return make_token(lx, TOK_COLON, forge_str(":"));
+    case ';': return make_token(lx, TOK_SEMI, forge_str(";"));
+    case '.': return make_token(lx, TOK_DOT, forge_str("."));
+    case '+': return make_token(lx, TOK_PLUS, forge_str("+"));
+    case '-': return make_token(lx, TOK_MINUS, forge_str("-"));
+    case '*': return make_token(lx, TOK_STAR, forge_str("*"));
+    case '/': return make_token(lx, TOK_SLASH, forge_str("/"));
+    case '%': return make_token(lx, TOK_PERCENT, forge_str("%"));
     case '!':
         if (lx->pos < lx->len && lx->src[lx->pos] == '=') {
             lx->pos++; lx->col++;
-            return make_token(lx, TOK_NE, hylo_str("!="));
+            return make_token(lx, TOK_NE, forge_str("!="));
         }
-        return make_token(lx, TOK_BANG, hylo_str("!"));
+        return make_token(lx, TOK_BANG, forge_str("!"));
     case '=':
         if (lx->pos < lx->len && lx->src[lx->pos] == '=') {
             lx->pos++; lx->col++;
-            return make_token(lx, TOK_EQEQ, hylo_str("=="));
+            return make_token(lx, TOK_EQEQ, forge_str("=="));
         }
-        return make_token(lx, TOK_EQ, hylo_str("="));
+        return make_token(lx, TOK_EQ, forge_str("="));
     case '<':
         if (lx->pos < lx->len && lx->src[lx->pos] == '=') {
             lx->pos++; lx->col++;
-            return make_token(lx, TOK_LE, hylo_str("<="));
+            return make_token(lx, TOK_LE, forge_str("<="));
         }
-        return make_token(lx, TOK_LT, hylo_str("<"));
+        return make_token(lx, TOK_LT, forge_str("<"));
     case '>':
         if (lx->pos < lx->len && lx->src[lx->pos] == '=') {
             lx->pos++; lx->col++;
-            return make_token(lx, TOK_GE, hylo_str(">="));
+            return make_token(lx, TOK_GE, forge_str(">="));
         }
-        return make_token(lx, TOK_GT, hylo_str(">"));
+        return make_token(lx, TOK_GT, forge_str(">"));
     case '&':
         if (lx->pos < lx->len && lx->src[lx->pos] == '&') {
             lx->pos++; lx->col++;
-            return make_token(lx, TOK_ANDAND, hylo_str("&&"));
+            return make_token(lx, TOK_ANDAND, forge_str("&&"));
         }
         break;
     case '|':
         if (lx->pos < lx->len && lx->src[lx->pos] == '|') {
             lx->pos++; lx->col++;
-            return make_token(lx, TOK_OROR, hylo_str("||"));
+            return make_token(lx, TOK_OROR, forge_str("||"));
         }
         break;
     default:
         break;
     }
-    fprintf(stderr, "hylo: unexpected character '%c' at %d:%d\n", c, line, col);
+    fprintf(stderr, "forge: unexpected character '%c' at %d:%d\n", c, line, col);
     exit(1);
 }
 

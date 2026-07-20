@@ -1,26 +1,26 @@
-#ifndef HYLO_MOD_REGISTRY_H
-#define HYLO_MOD_REGISTRY_H
+#ifndef FORGE_MOD_REGISTRY_H
+#define FORGE_MOD_REGISTRY_H
 
 #include "common.h"
 #include <stddef.h>
 #include <stdio.h>
 
 typedef struct {
-    const char *hy_name;
+    const char *fr_name;
     const char *c_name;
-} HyloStdFn;
+} ForgeStdFn;
 
 typedef struct {
-    HyloStr name;
+    ForgeStr name;
     const char *header;
-    const HyloStdFn *fns;
+    const ForgeStdFn *fns;
     size_t fn_count;
-} HyloModule;
+} ForgeModule;
 
-const HyloModule *hylo_std_module(HyloStr name);
-const char *hylo_std_c_name(HyloStr hy_name, HyloStr *imports, size_t import_count);
-const char *hylo_std_header(HyloStr module);
-int hylo_import_is_stdlib(HyloStr name);
-void hylo_lib_mangle(char *out, size_t cap, HyloStr lib, HyloStr fn);
+const ForgeModule *forge_std_module(ForgeStr name);
+const char *forge_std_c_name(ForgeStr fr_name, ForgeStr *imports, size_t import_count);
+const char *forge_std_header(ForgeStr module);
+int forge_import_is_stdlib(ForgeStr name);
+void forge_lib_mangle(char *out, size_t cap, ForgeStr lib, ForgeStr fn);
 
 #endif

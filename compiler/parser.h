@@ -1,5 +1,5 @@
-#ifndef HYLO_PARSER_H
-#define HYLO_PARSER_H
+#ifndef FORGE_PARSER_H
+#define FORGE_PARSER_H
 
 #include "ast.h"
 #include "lexer.h"
