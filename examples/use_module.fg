@@ -1,0 +1,7 @@
+import "modules/mathutil.fg";
+
+process main {
+    println(mathutil.add(10, 32));
+    println(mathutil.twice(21));
+    println(mathutil.square(8));
+}

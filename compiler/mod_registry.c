@@ -164,3 +164,14 @@ int forge_import_is_stdlib(ForgeStr name) {
 void forge_lib_mangle(char *out, size_t cap, ForgeStr lib, ForgeStr fn) {
     snprintf(out, cap, "frlib_%.*s_%.*s", (int)lib.len, lib.data, (int)fn.len, fn.data);
 }
+
+void forge_mod_mangle(char *out, size_t cap, ForgeStr mod, ForgeStr fn) {
+    snprintf(out, cap, "frmod_%.*s_%.*s", (int)mod.len, mod.data, (int)fn.len, fn.data);
+}
+
+int forge_import_is_file_module(Program *prog, ForgeStr name) {
+    for (size_t i = 0; i < prog->module_count; i++) {
+        if (forge_str_eq(prog->modules[i].name, name)) return 1;
+    }
+    return 0;
+}

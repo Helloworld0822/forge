@@ -190,4 +190,8 @@ void optimize_program(Program *prog) {
         for (size_t i = 0; i < prog->library.fn_count; i++)
             optimize_block(&prog->library.functions[i].body);
     }
+    for (size_t i = 0; i < prog->module_count; i++) {
+        for (size_t j = 0; j < prog->modules[i].fn_count; j++)
+            optimize_block(&prog->modules[i].functions[j].body);
+    }
 }

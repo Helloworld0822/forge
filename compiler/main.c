@@ -6,7 +6,9 @@
 #include "parser.h"
 #include "codegen.h"
 #include "optimize.h"
+#include "module_loader.h"
 #include "driver.h"
+#include "module_loader.h"
 
 static char *read_file(const char *path, size_t *out_len) {
     FILE *f = fopen(path, "rb");
@@ -36,7 +38,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "  --emit-c           Emit C instead of a native binary\n");
     fprintf(stderr, "  --forge-root PATH  Project root (include/, build/lib)\n");
     fprintf(stderr, "  --lib-dir PATH     Directory containing libforge_*.a\n");
-    fprintf(stderr, "  -I PATH            Extra include directory\n");
+    fprintf(stderr, "  -I PATH            Extra include directory (also searches for .fg modules)\n");
     fprintf(stderr, "  -l NAME             Link libforge_NAME.a (repeatable)\n");
     fprintf(stderr, "  --cc PATH          C compiler for native output (default: CC, clang, gcc, or cc)\n");
     fprintf(stderr, "  --keep-temp        Keep intermediate object files\n");
@@ -109,6 +111,14 @@ int main(int argc, char **argv) {
     Lexer lx;
     lexer_init(&lx, src, len);
     Program prog = parse_program(&lx);
+
+    ForgeModuleConfig mcfg = {
+        .entry_path = input,
+        .lib_dir = cfg.lib_dir,
+        .include_dirs = includes,
+        .include_dir_count = include_count,
+    };
+    forge_load_modules(&prog, &mcfg);
     optimize_program(&prog);
 
     int rc = 0;

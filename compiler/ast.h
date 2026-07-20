@@ -240,8 +240,20 @@ typedef struct {
 } LibraryDecl;
 
 typedef struct {
+    ForgeStr name;
+    char *path;
+    char *source;
+    FnDecl *functions;
+    size_t fn_count;
+} FileModule;
+
+typedef struct {
     ForgeStr *imports;
     size_t import_count;
+    ForgeStr *path_imports;
+    size_t path_import_count;
+    FileModule *modules;
+    size_t module_count;
     LibraryDecl library;
     StructDecl *structs;
     size_t struct_count;

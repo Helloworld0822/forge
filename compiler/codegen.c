@@ -19,7 +19,19 @@ typedef struct {
     ForgeStr *moved_locals;
     size_t moved_count;
     size_t moved_cap;
+    ForgeStr current_module;
 } Codegen;
+
+static FnDecl *lookup_module_fn(Program *prog, ForgeStr module, ForgeStr name) {
+    for (size_t i = 0; i < prog->module_count; i++) {
+        if (!forge_str_eq(prog->modules[i].name, module)) continue;
+        for (size_t j = 0; j < prog->modules[i].fn_count; j++) {
+            if (forge_str_eq(prog->modules[i].functions[j].name, name))
+                return &prog->modules[i].functions[j];
+        }
+    }
+    return NULL;
+}
 
 static void cg_mark_moved(Codegen *cg, ForgeStr name) {
     for (size_t i = 0; i < cg->moved_count; i++) {
@@ -268,6 +280,13 @@ static void emit_expr(Codegen *cg, Expr *e) {
         const char *c_fn = forge_std_c_name(name, cg->imports, cg->import_count);
         if (c_fn) {
             fprintf(cg->out, "%s(", c_fn);
+        } else if (cg->current_module.len > 0 &&
+                   lookup_module_fn(cg->prog, cg->current_module, name)) {
+            char sym[128];
+            forge_mod_mangle(sym, sizeof(sym), cg->current_module, name);
+            fprintf(cg->out, "%s(", sym);
+            FnDecl *fn = lookup_module_fn(cg->prog, cg->current_module, name);
+            if (fn) e->type = fn->ret_type;
         } else {
             FnDecl *fn = cg_lookup_fn(cg, name);
             if (fn) e->type = fn->ret_type;
@@ -285,7 +304,10 @@ static void emit_expr(Codegen *cg, Expr *e) {
         break;
     case EXPR_QUAL_CALL: {
         char sym[128];
-        forge_lib_mangle(sym, sizeof(sym), e->as.qual_call.module, e->as.qual_call.name);
+        if (forge_import_is_file_module(cg->prog, e->as.qual_call.module))
+            forge_mod_mangle(sym, sizeof(sym), e->as.qual_call.module, e->as.qual_call.name);
+        else
+            forge_lib_mangle(sym, sizeof(sym), e->as.qual_call.module, e->as.qual_call.name);
         fprintf(cg->out, "%s(", sym);
         for (size_t i = 0; i < e->as.qual_call.arg_count; i++) {
             if (i) fputc(',', cg->out);
@@ -765,6 +787,7 @@ static void emit_consts(Program *prog, FILE *out) {
 
 static void emit_import_headers(Program *prog, FILE *out) {
     for (size_t i = 0; i < prog->import_count; i++) {
+        if (forge_import_is_file_module(prog, prog->imports[i])) continue;
         const char *hdr = forge_std_header(prog->imports[i]);
         if (hdr) fprintf(out, "#include \"%s\"\n", hdr);
         else fprintf(out, "#include \"%.*s.h\"\n", (int)prog->imports[i].len, prog->imports[i].data);
@@ -940,10 +963,31 @@ void codegen_emit(Program *prog, FILE *out, const char *runtime_include) {
         fputs(" {\n", out);
         cg.indent = 1;
         cg.local_count = 0;
+        cg.current_module = forge_str("");
         cg_push_params(&cg, fn->params);
         emit_stmts(&cg, fn->body.first, NULL, false, NULL);
         cg.indent = 0;
         fputs("}\n\n", out);
+    }
+
+    for (size_t i = 0; i < prog->module_count; i++) {
+        FileModule *mod = &prog->modules[i];
+        for (size_t j = 0; j < mod->fn_count; j++) {
+            FnDecl *fn = &mod->functions[j];
+            fputs("static ", out);
+            char sym[128];
+            forge_mod_mangle(sym, sizeof(sym), mod->name, fn->name);
+            emit_fn_signature(out, sym, fn);
+            fputs(" {\n", out);
+            cg.indent = 1;
+            cg.local_count = 0;
+            cg.current_module = mod->name;
+            cg_push_params(&cg, fn->params);
+            emit_stmts(&cg, fn->body.first, NULL, false, NULL);
+            cg.indent = 0;
+            fputs("}\n\n", out);
+        }
+        cg.current_module = forge_str("");
     }
 
     for (size_t i = 0; i < prog->process_count; i++) {

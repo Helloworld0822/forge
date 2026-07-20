@@ -62,6 +62,7 @@ add_executable(forge
     compiler/ast.c
     compiler/codegen.c
     compiler/mod_registry.c
+    compiler/module_loader.c
     compiler/optimize.c
     compiler/driver.c
 )

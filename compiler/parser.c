@@ -738,12 +738,22 @@ Program parse_program(Lexer *lx) {
         Token t = lexer_peek(p.lx);
         if (t.kind == TOK_KW_IMPORT) {
             lexer_next(p.lx);
-            Token mod = lexer_peek(p.lx);
-            expect(&p, TOK_IDENT);
-            expect(&p, TOK_SEMI);
-            prog.import_count++;
-            prog.imports = (ForgeStr *)realloc(prog.imports, prog.import_count * sizeof(ForgeStr));
-            prog.imports[prog.import_count - 1] = token_str(mod);
+            if (lexer_peek(p.lx).kind == TOK_STRING) {
+                Token path_tok = lexer_peek(p.lx);
+                lexer_next(p.lx);
+                expect(&p, TOK_SEMI);
+                prog.path_import_count++;
+                prog.path_imports = (ForgeStr *)realloc(prog.path_imports,
+                    prog.path_import_count * sizeof(ForgeStr));
+                prog.path_imports[prog.path_import_count - 1] = token_str(path_tok);
+            } else {
+                Token mod = lexer_peek(p.lx);
+                expect(&p, TOK_IDENT);
+                expect(&p, TOK_SEMI);
+                prog.import_count++;
+                prog.imports = (ForgeStr *)realloc(prog.imports, prog.import_count * sizeof(ForgeStr));
+                prog.imports[prog.import_count - 1] = token_str(mod);
+            }
         } else if (t.kind == TOK_KW_LIBRARY) {
             if (prog.library.present) parser_error(&p, "only one library per file");
             prog.library = parse_library(&p);

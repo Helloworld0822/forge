@@ -333,6 +333,16 @@ static void free_stmts(Stmt *s) {
 
 void program_free(Program *p) {
     free(p->imports);
+    free(p->path_imports);
+    for (size_t i = 0; i < p->module_count; i++) {
+        free(p->modules[i].path);
+        free(p->modules[i].source);
+        for (size_t j = 0; j < p->modules[i].fn_count; j++) {
+            free_stmts(p->modules[i].functions[j].body.first);
+        }
+        free(p->modules[i].functions);
+    }
+    free(p->modules);
     if (p->library.present) {
         free(p->library.imports);
         for (size_t i = 0; i < p->library.fn_count; i++) {
