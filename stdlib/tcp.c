@@ -36,19 +36,28 @@ static int set_reuseport(fr_socket_t fd) {
 #endif
 }
 
+static void tune_listen_socket(fr_socket_t fd) {
+#if defined(FORGE_OS_LINUX) || defined(FORGE_OS_MACOS)
+    int buf = 65536;
+    setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &buf, sizeof(buf));
+    setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &buf, sizeof(buf));
+#endif
+}
+
 static int64_t tcp_listen_common(int64_t port, int reuseport) {
     fr_platform_init();
     fr_socket_t fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (fd == FR_SOCK_INVALID) return -1;
     set_reuseaddr(fd);
     if (reuseport) set_reuseport(fd);
+    tune_listen_socket(fd);
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons((uint16_t)port);
     if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) { fr_sock_close(fd); return -1; }
-    if (listen(fd, 512) < 0) { fr_sock_close(fd); return -1; }
+    if (listen(fd, 4096) < 0) { fr_sock_close(fd); return -1; }
     return (int64_t)fd;
 }
 
