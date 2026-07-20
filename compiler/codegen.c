@@ -101,6 +101,7 @@ static int cg_stdlib_returns_string(Codegen *cg, ForgeStr name) {
     if (!mapped) return 0;
     static const char *str_fns[] = {
         "fr_str_concat", "fr_str_sub", "fr_str_trim", "fr_fs_read", "fr_fs_list_dir",
+        "fr_io_read_line", "fr_io_read_stdin", "fr_io_prompt", "fr_io_read_fd",
         "fr_tcp_recv", "fr_udp_recv", "fr_http_get", "fr_http_post",
         "fr_http_req_method", "fr_http_req_path", "fr_http_req_body",
         "fr_json_get_string", "fr_json_stringify_str", "fr_json_stringify_int",

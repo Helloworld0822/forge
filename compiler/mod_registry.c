@@ -3,8 +3,22 @@
 
 static const ForgeStdFn IO_FNS[] = {
     {"print", "fr_print"},
+    {"print_int", "fr_print_int"},
+    {"print_str", "fr_print_str"},
     {"eprint", "fr_eprint"},
+    {"eprint_int", "fr_io_eprint_int"},
     {"eprintln", "fr_eprintln"},
+    {"flush", "fr_io_flush"},
+    {"flush_err", "fr_io_flush_err"},
+    {"read_line", "fr_io_read_line"},
+    {"read_char", "fr_io_read_char"},
+    {"read_stdin", "fr_io_read_stdin"},
+    {"prompt", "fr_io_prompt"},
+    {"write_fd", "fr_io_write_fd"},
+    {"read_fd", "fr_io_read_fd"},
+    {"stdin_fd", "fr_io_stdin_fd"},
+    {"stdout_fd", "fr_io_stdout_fd"},
+    {"stderr_fd", "fr_io_stderr_fd"},
 };
 
 static const ForgeStdFn STRING_FNS[] = {
@@ -106,7 +120,7 @@ static const ForgeStdFn JSON_FNS[] = {
 };
 
 static const ForgeModule MODULES[] = {
-    { .name = { "io", 2 }, .header = "forge/io.h", .fns = IO_FNS, .fn_count = 3 },
+    { .name = { "io", 2 }, .header = "forge/io.h", .fns = IO_FNS, .fn_count = 17 },
     { .name = { "strings", 7 }, .header = "forge/string.h", .fns = STRING_FNS, .fn_count = 11 },
     { .name = { "math", 4 }, .header = "forge/math.h", .fns = MATH_FNS, .fn_count = 6 },
     { .name = { "time", 4 }, .header = "forge/time.h", .fns = TIME_FNS, .fn_count = 2 },

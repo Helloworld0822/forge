@@ -1,0 +1,21 @@
+import io;
+import strings;
+
+process main {
+    print("Enter your name: ");
+    flush();
+    let name: string = read_line();
+    print_str(str_concat("Hello, ", name));
+    println();
+
+    let echoed: string = prompt("Say something: ");
+    print_str(echoed);
+    println();
+
+    eprint("logged to stderr\n");
+    flush_err();
+
+    let n: int = write_fd(stdout_fd(), "written via fd\n");
+    print_int(n);
+    println();
+}

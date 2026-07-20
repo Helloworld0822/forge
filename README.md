@@ -238,7 +238,7 @@ Import modules with `import`. Standard modules are included in `libforge_std`.
 
 | Module | Description |
 |--------|-------------|
-| `io` | `print`, `eprint`, `eprintln` |
+| `io` | `print`, `print_int`, `read_line`, `read_char`, `read_stdin`, `prompt`, `flush`, `write_fd`, `read_fd`, `eprint`, `eprintln` |
 | `strings` | `str_len`, `str_concat`, `str_eq`, … |
 | `math` | `abs_i`, `min_i`, `max_i`, `pow_i`, … |
 | `time` | `time_now_ms`, `sleep_ms` |
