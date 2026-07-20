@@ -28,12 +28,17 @@ static ForgeType parse_type(Parser *p) {
     case TOK_KW_BOOL: lexer_next(p->lx); return forge_type_bool();
     case TOK_KW_STRING: lexer_next(p->lx); return forge_type_string();
     case TOK_KW_VOID: lexer_next(p->lx); return forge_type_void();
+    case TOK_KW_PTR: lexer_next(p->lx); return forge_type_ptr();
+    case TOK_IDENT:
+        lexer_next(p->lx);
+        return forge_type_struct(token_str(t));
     default:
         parser_error(p, "expected type");
         return forge_type_void();
     }
 }
 
+static Expr *parse_expr(Parser *p);
 static Expr *parse_primary(Parser *p);
 static Expr *parse_unary(Parser *p);
 static Expr *parse_mul(Parser *p);
@@ -41,9 +46,25 @@ static Expr *parse_add(Parser *p);
 static Expr *parse_cmp(Parser *p);
 static Expr *parse_and(Parser *p);
 static Expr *parse_or(Parser *p);
-static Expr *parse_expr(Parser *p);
 static Block *parse_block(Parser *p);
 static Stmt *parse_stmt(Parser *p);
+
+static Expr *parse_postfix(Parser *p, Expr *e) {
+    for (;;) {
+        if (lexer_match(p->lx, TOK_DOT)) {
+            Token field = lexer_peek(p->lx);
+            expect(p, TOK_IDENT);
+            e = expr_field(e, token_str(field));
+        } else if (lexer_match(p->lx, TOK_LBRACKET)) {
+            Expr *idx = parse_expr(p);
+            expect(p, TOK_RBRACKET);
+            e = expr_index(e, idx);
+        } else {
+            break;
+        }
+    }
+    return e;
+}
 
 static Expr *parse_primary(Parser *p) {
     Token t = lexer_peek(p->lx);
@@ -84,7 +105,7 @@ static Expr *parse_primary(Parser *p) {
                 }
                 return expr_qual_call(name, token_str(fn), args, n);
             }
-            parser_error(p, "expected '(' after qualified name");
+            return expr_field(expr_ident(name), token_str(fn));
         }
         if (lexer_match(p->lx, TOK_LPAREN)) {
             Expr **args = NULL;
@@ -122,12 +143,12 @@ static Expr *parse_primary(Parser *p) {
 
 static Expr *parse_unary(Parser *p) {
     if (lexer_match(p->lx, TOK_MINUS)) {
-        return expr_binary(BIN_SUB, expr_int(0), parse_unary(p));
+        return parse_postfix(p, expr_binary(BIN_SUB, expr_int(0), parse_unary(p)));
     }
     if (lexer_match(p->lx, TOK_BANG)) {
-        return expr_binary(BIN_EQ, parse_unary(p), expr_bool(false));
+        return parse_postfix(p, expr_binary(BIN_EQ, parse_unary(p), expr_bool(false)));
     }
-    return parse_primary(p);
+    return parse_postfix(p, parse_primary(p));
 }
 
 static Expr *parse_mul(Parser *p) {
@@ -195,9 +216,20 @@ static Block *parse_block(Parser *p) {
 }
 
 static Stmt *parse_stmt(Parser *p) {
+    if (lexer_match(p->lx, TOK_KW_BREAK)) {
+        expect(p, TOK_SEMI);
+        return stmt_break();
+    }
+    if (lexer_match(p->lx, TOK_KW_CONTINUE)) {
+        expect(p, TOK_SEMI);
+        return stmt_continue();
+    }
     if (lexer_match(p->lx, TOK_KW_LET) || lexer_match(p->lx, TOK_KW_MUT)) {
-        bool mut = lexer_peek(p->lx).kind == TOK_KW_MUT;
-        if (mut) lexer_next(p->lx);
+        bool mut = false;
+        if (lexer_peek(p->lx).kind == TOK_KW_MUT) {
+            mut = true;
+            lexer_next(p->lx);
+        }
         Token name = lexer_peek(p->lx);
         expect(p, TOK_IDENT);
         ForgeType ty = forge_type_int();
@@ -219,7 +251,14 @@ static Stmt *parse_stmt(Parser *p) {
         expect(p, TOK_RPAREN);
         Block *then_br = parse_block(p);
         Block *else_br = NULL;
-        if (lexer_match(p->lx, TOK_KW_ELSE)) else_br = parse_block(p);
+        if (lexer_match(p->lx, TOK_KW_ELSE)) {
+            if (lexer_peek(p->lx).kind == TOK_KW_IF) {
+                else_br = (Block *)calloc(1, sizeof(Block));
+                block_append(else_br, parse_stmt(p));
+            } else {
+                else_br = parse_block(p);
+            }
+        }
         return stmt_if(cond, then_br, else_br);
     }
     if (lexer_match(p->lx, TOK_KW_WHILE)) {
@@ -228,6 +267,45 @@ static Stmt *parse_stmt(Parser *p) {
         expect(p, TOK_RPAREN);
         Block *body = parse_block(p);
         return stmt_while(cond, body);
+    }
+    if (lexer_match(p->lx, TOK_KW_FOR)) {
+        expect(p, TOK_LPAREN);
+        Stmt *init = NULL;
+        if (lexer_peek(p->lx).kind == TOK_KW_LET || lexer_peek(p->lx).kind == TOK_KW_MUT) {
+            bool mut = lexer_match(p->lx, TOK_KW_MUT);
+            if (!mut) expect(p, TOK_KW_LET);
+            Token name = lexer_peek(p->lx);
+            expect(p, TOK_IDENT);
+            ForgeType ty = forge_type_int();
+            if (lexer_match(p->lx, TOK_COLON)) ty = parse_type(p);
+            Expr *init_expr = NULL;
+            if (lexer_match(p->lx, TOK_EQ)) init_expr = parse_expr(p);
+            init = stmt_let(mut, token_str(name), ty, init_expr);
+        } else if (lexer_peek(p->lx).kind == TOK_IDENT) {
+            Token name = lexer_peek(p->lx);
+            lexer_next(p->lx);
+            if (lexer_match(p->lx, TOK_EQ)) {
+                init = stmt_assign(token_str(name), parse_expr(p));
+            } else {
+                parser_error(p, "expected '=' in for init");
+            }
+        }
+        expect(p, TOK_SEMI);
+        Expr *cond = parse_expr(p);
+        expect(p, TOK_SEMI);
+        Stmt *step = NULL;
+        if (lexer_peek(p->lx).kind == TOK_IDENT) {
+            Token name = lexer_peek(p->lx);
+            lexer_next(p->lx);
+            if (lexer_match(p->lx, TOK_EQ)) {
+                step = stmt_assign(token_str(name), parse_expr(p));
+            } else {
+                parser_error(p, "expected '=' in for step");
+            }
+        }
+        expect(p, TOK_RPAREN);
+        Block *body = parse_block(p);
+        return stmt_for(init, cond, step, body);
     }
     if (lexer_match(p->lx, TOK_KW_SPAWN)) {
         Token name = lexer_peek(p->lx);
@@ -331,22 +409,33 @@ static Param *parse_params(Parser *p) {
     return head;
 }
 
-static FnDecl parse_fn_body(Parser *p) {
+static FnDecl parse_fn_body(Parser *p, bool is_extern) {
     Token name = lexer_peek(p->lx);
     expect(p, TOK_IDENT);
     expect(p, TOK_LPAREN);
     Param *params = parse_params(p);
     ForgeType ret = forge_type_void();
     if (lexer_match(p->lx, TOK_COLON)) ret = parse_type(p);
-    Block *body = parse_block(p);
-    FnDecl fn = { token_str(name), params, ret, *body };
-    free(body);
+    FnDecl fn = { token_str(name), params, ret, block_new(), is_extern };
+    if (is_extern) {
+        expect(p, TOK_SEMI);
+    } else {
+        Block *body = parse_block(p);
+        fn.body = *body;
+        free(body);
+    }
     return fn;
 }
 
 static FnDecl parse_fn(Parser *p) {
     expect(p, TOK_KW_FN);
-    return parse_fn_body(p);
+    return parse_fn_body(p, false);
+}
+
+static FnDecl parse_extern_fn(Parser *p) {
+    expect(p, TOK_KW_EXTERN);
+    expect(p, TOK_KW_FN);
+    return parse_fn_body(p, true);
 }
 
 static CoroDecl parse_coroutine(Parser *p) {
@@ -457,7 +546,7 @@ static LibraryDecl parse_library(Parser *p) {
             lib.imports[lib.import_count - 1] = token_str(mod);
         } else if (lexer_match(p->lx, TOK_KW_EXPORT)) {
             expect(p, TOK_KW_FN);
-            FnDecl fn = parse_fn_body(p);
+            FnDecl fn = parse_fn_body(p, false);
             lib.fn_count++;
             lib.functions = (FnDecl *)realloc(lib.functions, lib.fn_count * sizeof(FnDecl));
             lib.functions[lib.fn_count - 1] = fn;
@@ -467,6 +556,72 @@ static LibraryDecl parse_library(Parser *p) {
     }
     expect(p, TOK_RBRACE);
     return lib;
+}
+
+static StructDecl parse_struct(Parser *p) {
+    expect(p, TOK_KW_STRUCT);
+    Token name = lexer_peek(p->lx);
+    expect(p, TOK_IDENT);
+    expect(p, TOK_LBRACE);
+
+    StructDecl sd = { token_str(name), NULL };
+    Field *tail = NULL;
+    while (lexer_peek(p->lx).kind != TOK_RBRACE) {
+        Token field_name = lexer_peek(p->lx);
+        expect(p, TOK_IDENT);
+        expect(p, TOK_COLON);
+        ForgeType ty = parse_type(p);
+        expect(p, TOK_SEMI);
+        Field *f = (Field *)calloc(1, sizeof(Field));
+        f->name = token_str(field_name);
+        f->type = ty;
+        if (!sd.fields) sd.fields = tail = f;
+        else { tail->next = f; tail = f; }
+    }
+    expect(p, TOK_RBRACE);
+    return sd;
+}
+
+static EnumDecl parse_enum(Parser *p) {
+    expect(p, TOK_KW_ENUM);
+    Token name = lexer_peek(p->lx);
+    expect(p, TOK_IDENT);
+    expect(p, TOK_LBRACE);
+
+    EnumDecl ed = { token_str(name), NULL };
+    EnumVariant *tail = NULL;
+    int64_t next_val = 0;
+    while (lexer_peek(p->lx).kind != TOK_RBRACE) {
+        Token variant = lexer_peek(p->lx);
+        expect(p, TOK_IDENT);
+        int64_t val = next_val;
+        if (lexer_match(p->lx, TOK_EQ)) {
+            Token v = lexer_peek(p->lx);
+            expect(p, TOK_INT);
+            val = v.int_val;
+            next_val = val + 1;
+        } else {
+            next_val++;
+        }
+        expect(p, TOK_SEMI);
+        EnumVariant *ev = (EnumVariant *)calloc(1, sizeof(EnumVariant));
+        ev->name = token_str(variant);
+        ev->value = val;
+        if (!ed.variants) ed.variants = tail = ev;
+        else { tail->next = ev; tail = ev; }
+    }
+    expect(p, TOK_RBRACE);
+    return ed;
+}
+
+static NativeDecl parse_native(Parser *p) {
+    expect(p, TOK_KW_NATIVE);
+    Token name = lexer_peek(p->lx);
+    expect(p, TOK_IDENT);
+    Block *body = parse_block(p);
+    NativeDecl nd = { token_str(name), *body };
+    free(body);
+    return nd;
 }
 
 Program parse_program(Lexer *lx) {
@@ -486,6 +641,22 @@ Program parse_program(Lexer *lx) {
         } else if (t.kind == TOK_KW_LIBRARY) {
             if (prog.library.present) parser_error(&p, "only one library per file");
             prog.library = parse_library(&p);
+        } else if (t.kind == TOK_KW_STRUCT) {
+            prog.struct_count++;
+            prog.structs = (StructDecl *)realloc(prog.structs, prog.struct_count * sizeof(StructDecl));
+            prog.structs[prog.struct_count - 1] = parse_struct(&p);
+        } else if (t.kind == TOK_KW_ENUM) {
+            prog.enum_count++;
+            prog.enums = (EnumDecl *)realloc(prog.enums, prog.enum_count * sizeof(EnumDecl));
+            prog.enums[prog.enum_count - 1] = parse_enum(&p);
+        } else if (t.kind == TOK_KW_NATIVE) {
+            prog.native_count++;
+            prog.natives = (NativeDecl *)realloc(prog.natives, prog.native_count * sizeof(NativeDecl));
+            prog.natives[prog.native_count - 1] = parse_native(&p);
+        } else if (t.kind == TOK_KW_EXTERN) {
+            prog.fn_count++;
+            prog.functions = (FnDecl *)realloc(prog.functions, prog.fn_count * sizeof(FnDecl));
+            prog.functions[prog.fn_count - 1] = parse_extern_fn(&p);
         } else if (t.kind == TOK_KW_PROCESS) {
             prog.process_count++;
             prog.processes = (ProcessDecl *)realloc(prog.processes, prog.process_count * sizeof(ProcessDecl));

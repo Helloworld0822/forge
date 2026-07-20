@@ -8,11 +8,14 @@ typedef enum {
     TY_INT,
     TY_FLOAT,
     TY_BOOL,
-    TY_STRING
+    TY_STRING,
+    TY_PTR,
+    TY_STRUCT
 } ForgeTypeKind;
 
 typedef struct ForgeType {
     ForgeTypeKind kind;
+    ForgeStr struct_name;
 } ForgeType;
 
 typedef enum {
@@ -24,7 +27,9 @@ typedef enum {
     EXPR_BINARY,
     EXPR_CALL,
     EXPR_QUAL_CALL,
-    EXPR_RECV
+    EXPR_RECV,
+    EXPR_INDEX,
+    EXPR_FIELD
 } ExprKind;
 
 typedef enum {
@@ -37,7 +42,6 @@ typedef struct Expr Expr;
 typedef struct Stmt Stmt;
 typedef struct Block Block;
 typedef struct Param Param;
-typedef struct Field Field;
 
 struct Expr {
     ExprKind kind;
@@ -64,6 +68,14 @@ struct Expr {
             Expr **args;
             size_t arg_count;
         } qual_call;
+        struct {
+            Expr *base;
+            Expr *index;
+        } index;
+        struct {
+            Expr *base;
+            ForgeStr field;
+        } field;
     } as;
 };
 
@@ -74,11 +86,14 @@ struct Stmt {
         STMT_RETURN,
         STMT_IF,
         STMT_WHILE,
+        STMT_FOR,
         STMT_SPAWN,
-    STMT_SEND,
-    STMT_YIELD,
-    STMT_ASSIGN,
-    STMT_BLOCK
+        STMT_SEND,
+        STMT_YIELD,
+        STMT_ASSIGN,
+        STMT_BREAK,
+        STMT_CONTINUE,
+        STMT_BLOCK
     } kind;
     union {
         struct {
@@ -98,6 +113,12 @@ struct Stmt {
             Expr *cond;
             Block *body;
         } while_stmt;
+        struct {
+            Stmt *init;
+            Expr *cond;
+            Stmt *step;
+            Block *body;
+        } for_stmt;
         struct {
             ForgeStr coro_name;
             Expr **args;
@@ -128,11 +149,34 @@ struct Param {
     Param *next;
 };
 
+typedef struct Field {
+    ForgeStr name;
+    ForgeType type;
+    struct Field *next;
+} Field;
+
+typedef struct {
+    ForgeStr name;
+    Field *fields;
+} StructDecl;
+
+typedef struct EnumVariant {
+    ForgeStr name;
+    int64_t value;
+    struct EnumVariant *next;
+} EnumVariant;
+
+typedef struct {
+    ForgeStr name;
+    EnumVariant *variants;
+} EnumDecl;
+
 typedef struct {
     ForgeStr name;
     Param *params;
     ForgeType ret_type;
     Block body;
+    bool is_extern;
 } FnDecl;
 
 typedef struct {
@@ -150,6 +194,11 @@ typedef struct {
     Param receive_param;
     bool has_receive;
 } ProcessDecl;
+
+typedef struct {
+    ForgeStr name;
+    Block body;
+} NativeDecl;
 
 typedef struct {
     ForgeStr name;
@@ -171,8 +220,14 @@ typedef struct {
     ForgeStr *imports;
     size_t import_count;
     LibraryDecl library;
+    StructDecl *structs;
+    size_t struct_count;
+    EnumDecl *enums;
+    size_t enum_count;
     ProcessDecl *processes;
     size_t process_count;
+    NativeDecl *natives;
+    size_t native_count;
     FnDecl *functions;
     size_t fn_count;
     SupervisorDecl *supervisors;
@@ -184,6 +239,8 @@ ForgeType forge_type_int(void);
 ForgeType forge_type_float(void);
 ForgeType forge_type_bool(void);
 ForgeType forge_type_string(void);
+ForgeType forge_type_ptr(void);
+ForgeType forge_type_struct(ForgeStr name);
 ForgeType forge_type_from_name(ForgeStr name);
 
 Expr *expr_int(int64_t v);
@@ -194,6 +251,8 @@ Expr *expr_ident(ForgeStr name);
 Expr *expr_binary(BinOp op, Expr *l, Expr *r);
 Expr *expr_call(ForgeStr name, Expr **args, size_t n);
 Expr *expr_qual_call(ForgeStr module, ForgeStr name, Expr **args, size_t n);
+Expr *expr_index(Expr *base, Expr *index);
+Expr *expr_field(Expr *base, ForgeStr field);
 Expr *expr_recv(void);
 
 Block block_new(void);
@@ -203,10 +262,13 @@ Stmt *stmt_expr(Expr *e);
 Stmt *stmt_return(Expr *e);
 Stmt *stmt_if(Expr *cond, Block *then_br, Block *else_br);
 Stmt *stmt_while(Expr *cond, Block *body);
+Stmt *stmt_for(Stmt *init, Expr *cond, Stmt *step, Block *body);
 Stmt *stmt_spawn(ForgeStr name, Expr **args, size_t n);
 Stmt *stmt_send(Expr *target, int tag, Expr *value);
 Stmt *stmt_yield(void);
 Stmt *stmt_assign(ForgeStr name, Expr *value);
+Stmt *stmt_break(void);
+Stmt *stmt_continue(void);
 Stmt *stmt_block(Block *b);
 
 void program_free(Program *p);

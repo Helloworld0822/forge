@@ -1,10 +1,12 @@
 #include "ast.h"
 
-ForgeType forge_type_void(void) { return (ForgeType){ TY_VOID }; }
-ForgeType forge_type_int(void) { return (ForgeType){ TY_INT }; }
-ForgeType forge_type_float(void) { return (ForgeType){ TY_FLOAT }; }
-ForgeType forge_type_bool(void) { return (ForgeType){ TY_BOOL }; }
-ForgeType forge_type_string(void) { return (ForgeType){ TY_STRING }; }
+ForgeType forge_type_void(void) { return (ForgeType){ .kind = TY_VOID }; }
+ForgeType forge_type_int(void) { return (ForgeType){ .kind = TY_INT }; }
+ForgeType forge_type_float(void) { return (ForgeType){ .kind = TY_FLOAT }; }
+ForgeType forge_type_bool(void) { return (ForgeType){ .kind = TY_BOOL }; }
+ForgeType forge_type_string(void) { return (ForgeType){ .kind = TY_STRING }; }
+ForgeType forge_type_ptr(void) { return (ForgeType){ .kind = TY_PTR }; }
+ForgeType forge_type_struct(ForgeStr name) { return (ForgeType){ .kind = TY_STRUCT, .struct_name = name }; }
 
 ForgeType forge_type_from_name(ForgeStr name) {
     if (forge_str_eq(name, forge_str("int"))) return forge_type_int();
@@ -12,7 +14,8 @@ ForgeType forge_type_from_name(ForgeStr name) {
     if (forge_str_eq(name, forge_str("bool"))) return forge_type_bool();
     if (forge_str_eq(name, forge_str("string"))) return forge_type_string();
     if (forge_str_eq(name, forge_str("void"))) return forge_type_void();
-    return forge_type_void();
+    if (forge_str_eq(name, forge_str("ptr"))) return forge_type_ptr();
+    return forge_type_struct(name);
 }
 
 static Expr *expr_new(ExprKind kind) {
@@ -88,6 +91,22 @@ Expr *expr_recv(void) {
     return e;
 }
 
+Expr *expr_index(Expr *base, Expr *index) {
+    Expr *e = expr_new(EXPR_INDEX);
+    e->as.index.base = base;
+    e->as.index.index = index;
+    e->type = forge_type_int();
+    return e;
+}
+
+Expr *expr_field(Expr *base, ForgeStr field) {
+    Expr *e = expr_new(EXPR_FIELD);
+    e->as.field.base = base;
+    e->as.field.field = field;
+    e->type = base->type;
+    return e;
+}
+
 Block block_new(void) {
     return (Block){ NULL, NULL };
 }
@@ -144,6 +163,15 @@ Stmt *stmt_while(Expr *cond, Block *body) {
     return s;
 }
 
+Stmt *stmt_for(Stmt *init, Expr *cond, Stmt *step, Block *body) {
+    Stmt *s = stmt_new(STMT_FOR);
+    s->as.for_stmt.init = init;
+    s->as.for_stmt.cond = cond;
+    s->as.for_stmt.step = step;
+    s->as.for_stmt.body = body;
+    return s;
+}
+
 Stmt *stmt_spawn(ForgeStr name, Expr **args, size_t n) {
     Stmt *s = stmt_new(STMT_SPAWN);
     s->as.spawn.coro_name = name;
@@ -171,6 +199,9 @@ Stmt *stmt_assign(ForgeStr name, Expr *value) {
     return s;
 }
 
+Stmt *stmt_break(void) { return stmt_new(STMT_BREAK); }
+Stmt *stmt_continue(void) { return stmt_new(STMT_CONTINUE); }
+
 Stmt *stmt_block(Block *b) {
     Stmt *s = stmt_new(STMT_BLOCK);
     s->as.block = b;
@@ -191,6 +222,13 @@ static void free_expr(Expr *e) {
     case EXPR_QUAL_CALL:
         for (size_t i = 0; i < e->as.qual_call.arg_count; i++) free_expr(e->as.qual_call.args[i]);
         free(e->as.qual_call.args);
+        break;
+    case EXPR_INDEX:
+        free_expr(e->as.index.base);
+        free_expr(e->as.index.index);
+        break;
+    case EXPR_FIELD:
+        free_expr(e->as.field.base);
         break;
     default:
         break;
@@ -218,6 +256,13 @@ static void free_stmts(Stmt *s) {
             free_expr(s->as.while_stmt.cond);
             free_stmts(s->as.while_stmt.body->first);
             free(s->as.while_stmt.body);
+            break;
+        case STMT_FOR:
+            if (s->as.for_stmt.init) free_stmts(s->as.for_stmt.init);
+            free_expr(s->as.for_stmt.cond);
+            if (s->as.for_stmt.step) free_stmts(s->as.for_stmt.step);
+            free_stmts(s->as.for_stmt.body->first);
+            free(s->as.for_stmt.body);
             break;
         case STMT_SPAWN:
             for (size_t i = 0; i < s->as.spawn.arg_count; i++) free_expr(s->as.spawn.args[i]);
@@ -264,8 +309,22 @@ void program_free(Program *p) {
         }
     }
     free(p->processes);
+    for (size_t i = 0; i < p->native_count; i++) {
+        free_stmts(p->natives[i].body.first);
+    }
+    free(p->natives);
+    for (size_t i = 0; i < p->struct_count; i++) {
+        Field *f = p->structs[i].fields;
+        while (f) { Field *n = f->next; free(f); f = n; }
+    }
+    free(p->structs);
+    for (size_t i = 0; i < p->enum_count; i++) {
+        EnumVariant *v = p->enums[i].variants;
+        while (v) { EnumVariant *n = v->next; free(v); v = n; }
+    }
+    free(p->enums);
     for (size_t i = 0; i < p->fn_count; i++) {
-        free_stmts(p->functions[i].body.first);
+        if (!p->functions[i].is_extern) free_stmts(p->functions[i].body.first);
     }
     free(p->functions);
     for (size_t i = 0; i < p->supervisor_count; i++) {

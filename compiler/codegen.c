@@ -13,7 +13,33 @@ typedef struct {
     size_t local_cap;
     ForgeStr *imports;
     size_t import_count;
+    int loop_depth;
+    FnDecl **fn_table;
+    size_t fn_table_count;
 } Codegen;
+
+static FnDecl *cg_lookup_fn(Codegen *cg, ForgeStr name) {
+    for (size_t i = 0; i < cg->fn_table_count; i++) {
+        if (forge_str_eq(cg->fn_table[i]->name, name)) return cg->fn_table[i];
+    }
+    return NULL;
+}
+
+static void cg_build_fn_table(Codegen *cg) {
+    Program *prog = cg->prog;
+    size_t n = prog->fn_count;
+    if (prog->library.present) n += prog->library.fn_count;
+    cg->fn_table = (FnDecl **)calloc(n, sizeof(FnDecl *));
+  if (!cg->fn_table) forge_die("out of memory");
+    size_t k = 0;
+    for (size_t i = 0; i < prog->fn_count; i++)
+        if (!prog->functions[i].is_extern) cg->fn_table[k++] = &prog->functions[i];
+    if (prog->library.present) {
+        for (size_t i = 0; i < prog->library.fn_count; i++)
+            cg->fn_table[k++] = &prog->library.functions[i];
+    }
+    cg->fn_table_count = k;
+}
 
 static void cg_push_local(Codegen *cg, ForgeStr name, ForgeType ty) {
     for (size_t i = 0; i < cg->local_count; i++) {
@@ -31,6 +57,10 @@ static void cg_push_local(Codegen *cg, ForgeStr name, ForgeType ty) {
     cg->local_count++;
 }
 
+static void cg_push_params(Codegen *cg, Param *params) {
+    for (Param *p = params; p; p = p->next) cg_push_local(cg, p->name, p->type);
+}
+
 static ForgeType cg_lookup_local(Codegen *cg, ForgeStr name) {
     for (size_t i = 0; i < cg->local_count; i++) {
         if (forge_str_eq(cg->locals[i].name, name)) return cg->locals[i].type;
@@ -46,7 +76,8 @@ static int cg_stdlib_returns_string(Codegen *cg, ForgeStr name) {
         "fr_tcp_recv", "fr_udp_recv", "fr_http_get", "fr_http_post",
         "fr_http_req_method", "fr_http_req_path", "fr_http_req_body",
         "fr_json_get_string", "fr_json_stringify_str", "fr_json_stringify_int",
-        "fr_udp_peer", "fr_os_getenv", "fr_os_argv", NULL
+        "fr_udp_peer", "fr_os_getenv", "fr_os_argv",
+        "fr_str_append", "fr_str_append_str", "fr_str_from_int", NULL
     };
     for (int i = 0; str_fns[i]; i++) {
         if (strcmp(mapped, str_fns[i]) == 0) return 1;
@@ -68,7 +99,11 @@ static int qual_call_returns_string(ForgeStr fn) {
 static int cg_expr_is_string(Codegen *cg, Expr *e) {
     if (e->kind == EXPR_STRING) return 1;
     if (e->kind == EXPR_IDENT) return cg_lookup_local(cg, e->as.ident).kind == TY_STRING;
-    if (e->kind == EXPR_CALL) return cg_stdlib_returns_string(cg, e->as.call.name);
+    if (e->kind == EXPR_CALL) {
+        if (cg_stdlib_returns_string(cg, e->as.call.name)) return 1;
+        FnDecl *fn = cg_lookup_fn(cg, e->as.call.name);
+        return fn && fn->ret_type.kind == TY_STRING;
+    }
     if (e->kind == EXPR_QUAL_CALL) return qual_call_returns_string(e->as.qual_call.name);
     return 0;
 }
@@ -92,7 +127,19 @@ static const char *c_type(ForgeType ty) {
     case TY_FLOAT: return "double";
     case TY_BOOL: return "int";
     case TY_STRING: return "const char*";
+    case TY_PTR: return "void*";
+    case TY_STRUCT:
+        fprintf(stderr, "forge: internal error: use c_type_name for struct types\n");
+        return "void*";
     default: return "void";
+    }
+}
+
+static void c_type_name(FILE *out, ForgeType ty) {
+    if (ty.kind == TY_STRUCT) {
+        fprintf(out, "%.*s", (int)ty.struct_name.len, ty.struct_name.data);
+    } else {
+        fputs(c_type(ty), out);
     }
 }
 
@@ -173,6 +220,8 @@ static void emit_expr(Codegen *cg, Expr *e) {
         if (c_fn) {
             fprintf(cg->out, "%s(", c_fn);
         } else {
+            FnDecl *fn = cg_lookup_fn(cg, name);
+            if (fn) e->type = fn->ret_type;
             fprintf(cg->out, "%.*s(", (int)name.len, name.data);
         }
         for (size_t i = 0; i < e->as.call.arg_count; i++) {
@@ -196,6 +245,27 @@ static void emit_expr(Codegen *cg, Expr *e) {
         fputc(')', cg->out);
         break;
     }
+    case EXPR_INDEX: {
+        ForgeType base_ty = e->as.index.base->type;
+        if (base_ty.kind == TY_STRING || cg_expr_is_string(cg, e->as.index.base)) {
+            fputs("fr_str_char_at(", cg->out);
+            emit_expr(cg, e->as.index.base);
+            fputs(", ", cg->out);
+            emit_expr(cg, e->as.index.index);
+            fputc(')', cg->out);
+        } else {
+            fputs("((int64_t*)", cg->out);
+            emit_expr(cg, e->as.index.base);
+            fputs(")[", cg->out);
+            emit_expr(cg, e->as.index.index);
+            fputs("]", cg->out);
+        }
+        break;
+    }
+    case EXPR_FIELD:
+        emit_expr(cg, e->as.field.base);
+        fprintf(cg->out, ".%.*s", (int)e->as.field.field.len, e->as.field.field.data);
+        break;
     }
 }
 
@@ -411,8 +481,8 @@ static void emit_stmts(Codegen *cg, Stmt *s, const char *proc_var, bool in_coro,
         case STMT_LET:
             cg_push_local(cg, s->as.let.name, s->as.let.type);
             cg_indent(cg);
-            fprintf(cg->out, "%s %.*s", c_type(s->as.let.type),
-                    (int)s->as.let.name.len, s->as.let.name.data);
+            c_type_name(cg->out, s->as.let.type);
+            fprintf(cg->out, " %.*s", (int)s->as.let.name.len, s->as.let.name.data);
             if (s->as.let.init) {
                 fputs(" = ", cg->out);
                 emit_expr(cg, s->as.let.init);
@@ -451,14 +521,40 @@ static void emit_stmts(Codegen *cg, Stmt *s, const char *proc_var, bool in_coro,
             }
             break;
         case STMT_WHILE:
-            cg_indent(cg);
-            fputs("while (", cg->out);
+            cg_line(cg, "while (");
             emit_expr(cg, s->as.while_stmt.cond);
             fputs(") {\n", cg->out);
             cg->indent++;
+            cg->loop_depth++;
             emit_stmts(cg, s->as.while_stmt.body->first, proc_var, in_coro, state_var);
+            cg->loop_depth--;
+            cg_indent(cg);
+            fputs("}\n", cg->out);
+            break;
+        case STMT_FOR:
+            fputs("    {\n", cg->out);
+            cg->indent++;
+            if (s->as.for_stmt.init) emit_stmts(cg, s->as.for_stmt.init, proc_var, in_coro, state_var);
+            cg_indent(cg);
+            fputs("while (", cg->out);
+            emit_expr(cg, s->as.for_stmt.cond);
+            fputs(") {\n", cg->out);
+            cg->indent++;
+            cg->loop_depth++;
+            emit_stmts(cg, s->as.for_stmt.body->first, proc_var, in_coro, state_var);
+            if (s->as.for_stmt.step) emit_stmts(cg, s->as.for_stmt.step, proc_var, in_coro, state_var);
+            cg->loop_depth--;
+            cg_indent(cg);
+            fputs("}\n", cg->out);
             cg->indent--;
-            cg_line(cg, "}");
+            cg_indent(cg);
+            fputs("}\n", cg->out);
+            break;
+        case STMT_BREAK:
+            cg_line(cg, "break;");
+            break;
+        case STMT_CONTINUE:
+            cg_line(cg, "continue;");
             break;
         case STMT_SPAWN:
             cg_indent(cg);
@@ -513,16 +609,53 @@ static void emit_import_headers(Program *prog, FILE *out) {
 }
 
 static void emit_fn_signature(FILE *out, const char *name, FnDecl *fn) {
-    fprintf(out, "%s %s(", c_type(fn->ret_type), name);
+    c_type_name(out, fn->ret_type);
+    if (name && name[0]) fprintf(out, " %s", name);
+    fputs("(", out);
     Param *p = fn->params;
     bool first = true;
     while (p) {
         if (!first) fputs(", ", out);
-        fprintf(out, "%s %.*s", c_type(p->type), (int)p->name.len, p->name.data);
+        c_type_name(out, p->type);
+        fprintf(out, " %.*s", (int)p->name.len, p->name.data);
         first = false;
         p = p->next;
     }
     fputs(")", out);
+}
+
+static void emit_structs(Program *prog, FILE *out) {
+    for (size_t i = 0; i < prog->struct_count; i++) {
+        StructDecl *sd = &prog->structs[i];
+        fprintf(out, "typedef struct {\n");
+        for (Field *f = sd->fields; f; f = f->next) {
+            fputs("    ", out);
+            c_type_name(out, f->type);
+            fprintf(out, " %.*s;\n", (int)f->name.len, f->name.data);
+        }
+        fprintf(out, "} %.*s;\n\n", (int)sd->name.len, sd->name.data);
+    }
+}
+
+static void emit_enums(Program *prog, FILE *out) {
+    for (size_t i = 0; i < prog->enum_count; i++) {
+        EnumDecl *ed = &prog->enums[i];
+        fprintf(out, "typedef enum {\n");
+        for (EnumVariant *v = ed->variants; v; v = v->next) {
+            fprintf(out, "    %.*s_%.*s = %lld,\n",
+                    (int)ed->name.len, ed->name.data,
+                    (int)v->name.len, v->name.data,
+                    (long long)v->value);
+        }
+        fprintf(out, "} %.*s;\n\n", (int)ed->name.len, ed->name.data);
+    }
+}
+
+static NativeDecl *find_native(Program *prog, ForgeStr name) {
+    for (size_t i = 0; i < prog->native_count; i++) {
+        if (forge_str_eq(prog->natives[i].name, name)) return &prog->natives[i];
+    }
+    return NULL;
 }
 
 void codegen_emit_library(Program *prog, FILE *out_c, FILE *out_h, const char *runtime_include) {
@@ -558,7 +691,8 @@ void codegen_emit_library(Program *prog, FILE *out_c, FILE *out_h, const char *r
     }
     fputs("\n", out_c);
 
-    Codegen cg = { out_c, 0, prog, NULL, NULL, 0, 0, lib->imports, lib->import_count };
+    Codegen cg = { out_c, 0, prog, NULL, NULL, 0, 0, lib->imports, lib->import_count, 0, NULL, 0 };
+    cg_build_fn_table(&cg);
     for (size_t i = 0; i < lib->fn_count; i++) {
         FnDecl *fn = &lib->functions[i];
         char sym[128];
@@ -567,21 +701,50 @@ void codegen_emit_library(Program *prog, FILE *out_c, FILE *out_h, const char *r
         fputs(" {\n", out_c);
         cg.indent = 1;
         cg.local_count = 0;
+        cg_push_params(&cg, fn->params);
         emit_stmts(&cg, fn->body.first, NULL, false, NULL);
         cg.indent = 0;
         fputs("}\n\n", out_c);
     }
     free(cg.locals);
+    free(cg.fn_table);
 }
 
 void codegen_emit(Program *prog, FILE *out, const char *runtime_include) {
-    Codegen cg = { out, 0, prog, NULL, NULL, 0, 0, prog->imports, prog->import_count };
+    Codegen cg = { out, 0, prog, NULL, NULL, 0, 0, prog->imports, prog->import_count, 0, NULL, 0 };
+    cg_build_fn_table(&cg);
 
     fputs("// Generated by Forge compiler (AOT -> C)\n", out);
     fprintf(out, "#include \"%s\"\n", runtime_include);
     fputs("#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n", out);
     fputs("#include \"forge/os.h\"\n", out);
     emit_import_headers(prog, out);
+    fputs("\n", out);
+
+    emit_structs(prog, out);
+    emit_enums(prog, out);
+
+    for (size_t i = 0; i < prog->fn_count; i++) {
+        FnDecl *fn = &prog->functions[i];
+        if (fn->is_extern) {
+            fputs("extern ", out);
+            char fn_name[128];
+            snprintf(fn_name, sizeof(fn_name), "%.*s", (int)fn->name.len, fn->name.data);
+            emit_fn_signature(out, fn_name, fn);
+            fputs(";\n", out);
+        }
+    }
+    fputs("\n", out);
+
+    for (size_t i = 0; i < prog->fn_count; i++) {
+        FnDecl *fn = &prog->functions[i];
+        if (fn->is_extern) continue;
+        fputs("static ", out);
+        char fn_name[128];
+        snprintf(fn_name, sizeof(fn_name), "%.*s", (int)fn->name.len, fn->name.data);
+        emit_fn_signature(out, fn_name, fn);
+        fputs(";\n", out);
+    }
     fputs("\n", out);
 
     for (size_t i = 0; i < prog->process_count; i++) {
@@ -593,17 +756,15 @@ void codegen_emit(Program *prog, FILE *out, const char *runtime_include) {
 
     for (size_t i = 0; i < prog->fn_count; i++) {
         FnDecl *fn = &prog->functions[i];
-        fprintf(out, "static %s %.*s(", c_type(fn->ret_type), (int)fn->name.len, fn->name.data);
-        Param *p = fn->params;
-        bool first = true;
-        while (p) {
-            if (!first) fputs(", ", out);
-            fprintf(out, "%s %.*s", c_type(p->type), (int)p->name.len, p->name.data);
-            first = false;
-            p = p->next;
-        }
-        fputs(") {\n", out);
+        if (fn->is_extern) continue;
+        fputs("static ", out);
+        char fn_name[128];
+        snprintf(fn_name, sizeof(fn_name), "%.*s", (int)fn->name.len, fn->name.data);
+        emit_fn_signature(out, fn_name, fn);
+        fputs(" {\n", out);
         cg.indent = 1;
+        cg.local_count = 0;
+        cg_push_params(&cg, fn->params);
         emit_stmts(&cg, fn->body.first, NULL, false, NULL);
         cg.indent = 0;
         fputs("}\n\n", out);
@@ -621,11 +782,29 @@ void codegen_emit(Program *prog, FILE *out, const char *runtime_include) {
     }
 
     ForgeStr entry_name = forge_str("main");
+    NativeDecl *native_main = find_native(prog, entry_name);
+
+    if (native_main) {
+        fputs("int main(int argc, char **argv) {\n", out);
+        cg.indent = 1;
+        cg.local_count = 0;
+        cg_line(&cg, "fr_os_set_args(argc, argv);");
+        emit_stmts(&cg, native_main->body.first, NULL, false, NULL);
+        cg_line(&cg, "return 0;");
+        cg.indent = 0;
+        fputs("}\n", out);
+        free(cg.locals);
+        free(cg.fn_table);
+        return;
+    }
+
     ProcessDecl *entry = find_process(prog, entry_name);
     if (!entry && prog->process_count > 0) entry = &prog->processes[0];
 
     if (!entry) {
         fputs("int main(void) { return 0; }\n", out);
+        free(cg.locals);
+        free(cg.fn_table);
         return;
     }
 
@@ -674,4 +853,5 @@ void codegen_emit(Program *prog, FILE *out, const char *runtime_include) {
     cg.indent = 0;
     fputs("}\n", out);
     free(cg.locals);
+    free(cg.fn_table);
 }
