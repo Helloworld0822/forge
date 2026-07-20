@@ -7,8 +7,8 @@ FORGE_BIN="${ROOT}/build/bin/bench_server"
 PY_SERVER="${ROOT}/benchmark/python/server.py"
 FORGE_PORT=19080
 PY_PORT=19081
-REQUESTS=2000
-CONCURRENCY=50
+REQUESTS=10000
+CONCURRENCY=200
 RESULTS="${ROOT}/benchmark/results.txt"
 
 mkdir -p "$(dirname "$RESULTS")"
