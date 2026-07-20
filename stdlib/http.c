@@ -257,19 +257,26 @@ void fr_http_serve_prepared(int64_t server) {
 }
 
 static int accept_nonblocking(int listen_fd) {
+#if defined(FORGE_OS_LINUX)
+    int client = fr_sock_accept_nb(listen_fd);
+#else
     fr_socket_t client = accept((fr_socket_t)listen_fd, NULL, NULL);
     if (client == FR_SOCK_INVALID) return -1;
-    fr_sock_set_tcp_nodelay((int)client);
-    return (int)client;
+    fr_sock_set_nonblocking((int)client);
+#endif
+    if (client < 0) return -1;
+    fr_sock_set_tcp_nodelay(client);
+    return client;
 }
 
 static void serve_client(fr_http_server_t *srv, int client) {
-    char discard[256];
+    char discard[512];
     fr_sock_recv(client, discard, sizeof(discard));
     fr_sock_send(client, srv->cached_resp, srv->cached_len);
     fr_sock_close(client);
 }
 
+#if !defined(FORGE_OS_LINUX)
 static void drain_accept_queue(int listen_fd, fr_http_server_t *srv) {
     for (;;) {
         int client = accept_nonblocking(listen_fd);
@@ -284,10 +291,11 @@ static void drain_accept_queue(int listen_fd, fr_http_server_t *srv) {
         serve_client(srv, client);
     }
 }
+#endif
 
 #if defined(FORGE_OS_LINUX)
 static void http_serve_event_loop(int listen_fd, fr_http_server_t *srv) {
-    int epfd = epoll_create1(0);
+    int epfd = epoll_create1(EPOLL_CLOEXEC);
     if (epfd < 0) return;
     fr_sock_set_nonblocking(listen_fd);
     struct epoll_event ev;
@@ -303,36 +311,14 @@ static void http_serve_event_loop(int listen_fd, fr_http_server_t *srv) {
         int n = epoll_wait(epfd, events, 128, -1);
         if (n < 0) continue;
         for (int i = 0; i < n; i++) {
-            int fd = events[i].data.fd;
-            if (fd == listen_fd) {
-                for (;;) {
-                    int client = accept_nonblocking(listen_fd);
-                    if (client < 0) {
-#if defined(FORGE_OS_WINDOWS)
-                        if (fr_sock_err() == WSAEWOULDBLOCK) break;
-#else
-                        if (errno == EAGAIN || errno == EWOULDBLOCK) break;
-#endif
-                        continue;
-                    }
-                    fr_sock_set_nonblocking(client);
-                    struct epoll_event cev;
-                    memset(&cev, 0, sizeof(cev));
-                    cev.events = EPOLLIN | EPOLLET;
-                    cev.data.fd = client;
-                    epoll_ctl(epfd, EPOLL_CTL_ADD, client, &cev);
-                }
-            } else {
-                char discard[256];
-                ssize_t r = fr_sock_recv(fd, discard, sizeof(discard));
-                if (r <= 0) {
-                    epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
-                    fr_sock_close(fd);
+            if (events[i].data.fd != listen_fd) continue;
+            for (;;) {
+                int client = accept_nonblocking(listen_fd);
+                if (client < 0) {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) break;
                     continue;
                 }
-                fr_sock_send(fd, srv->cached_resp, srv->cached_len);
-                epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
-                fr_sock_close(fd);
+                serve_client(srv, client);
             }
         }
     }
@@ -378,10 +364,13 @@ void fr_http_serve_ok(int64_t server, const char *body) {
 typedef struct {
     int listen_fd;
     fr_http_server_t *srv;
+    int worker_id;
 } http_worker_ctx_t;
 
 static void *http_worker_main(void *arg) {
     http_worker_ctx_t *ctx = (http_worker_ctx_t *)arg;
+    int cpus = fr_platform_cpu_count();
+    if (cpus > 0) fr_thread_pin_cpu(ctx->worker_id % cpus);
     http_serve_event_loop(ctx->listen_fd, ctx->srv);
     return NULL;
 }
@@ -409,6 +398,7 @@ void fr_http_serve_mt(int64_t server, int64_t threads) {
         if (fd < 0) continue;
         ctxs[started].listen_fd = (int)fd;
         ctxs[started].srv = srv;
+        ctxs[started].worker_id = started;
         fr_thread_t *tid = NULL;
         if (fr_thread_start(&tid, http_worker_main, &ctxs[started]) != 0) {
             fr_sock_close((int)fd);
