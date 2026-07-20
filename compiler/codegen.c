@@ -1,0 +1,512 @@
+#include "codegen.h"
+#include <stdarg.h>
+
+typedef struct {
+    FILE *out;
+    int indent;
+    Program *prog;
+    const char *state_prefix;
+} Codegen;
+
+static void cg_indent(Codegen *cg) {
+    for (int i = 0; i < cg->indent; i++) fputs("    ", cg->out);
+}
+
+static void cg_line(Codegen *cg, const char *fmt, ...) {
+    cg_indent(cg);
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(cg->out, fmt, ap);
+    va_end(ap);
+    fputc('\n', cg->out);
+}
+
+static const char *c_type(HyloType ty) {
+    switch (ty.kind) {
+    case TY_INT: return "int64_t";
+    case TY_FLOAT: return "double";
+    case TY_BOOL: return "int";
+    case TY_STRING: return "const char*";
+    default: return "void";
+    }
+}
+
+static void emit_expr(Codegen *cg, Expr *e);
+static void emit_stmts(Codegen *cg, Stmt *s, const char *proc_var, bool in_coro, const char *state_var);
+static CoroDecl *find_coro(ProcessDecl *proc, HyloStr name);
+
+static void emit_expr(Codegen *cg, Expr *e) {
+    switch (e->kind) {
+    case EXPR_INT:
+        fprintf(cg->out, "%lld", (long long)e->as.int_val);
+        break;
+    case EXPR_FLOAT:
+        fprintf(cg->out, "%g", e->as.float_val);
+        break;
+    case EXPR_BOOL:
+        fprintf(cg->out, "%s", e->as.bool_val ? "1" : "0");
+        break;
+    case EXPR_STRING: {
+        fputc('"', cg->out);
+        for (size_t i = 0; i < e->as.string_val.len; i++) {
+            char c = e->as.string_val.data[i];
+            if (c == '"' || c == '\\') fputc('\\', cg->out);
+            fputc(c, cg->out);
+        }
+        fputc('"', cg->out);
+        break;
+    }
+    case EXPR_IDENT:
+        if (cg->state_prefix) fputs(cg->state_prefix, cg->out);
+        fprintf(cg->out, "%.*s", (int)e->as.ident.len, e->as.ident.data);
+        break;
+    case EXPR_BINARY: {
+        const char *op = "?";
+        switch (e->as.binary.op) {
+        case BIN_ADD: op = "+"; break;
+        case BIN_SUB: op = "-"; break;
+        case BIN_MUL: op = "*"; break;
+        case BIN_DIV: op = "/"; break;
+        case BIN_MOD: op = "%"; break;
+        case BIN_EQ: op = "=="; break;
+        case BIN_NE: op = "!="; break;
+        case BIN_LT: op = "<"; break;
+        case BIN_LE: op = "<="; break;
+        case BIN_GT: op = ">"; break;
+        case BIN_GE: op = ">="; break;
+        case BIN_AND: op = "&&"; break;
+        case BIN_OR: op = "||"; break;
+        }
+        fputc('(', cg->out);
+        emit_expr(cg, e->as.binary.left);
+        fprintf(cg->out, " %s ", op);
+        emit_expr(cg, e->as.binary.right);
+        fputc(')', cg->out);
+        break;
+    }
+    case EXPR_CALL: {
+        HyloStr name = e->as.call.name;
+        if (hylo_str_eq(name, hylo_str("println"))) {
+            fputs("({ ", cg->out);
+            for (size_t i = 0; i < e->as.call.arg_count; i++) {
+                Expr *arg = e->as.call.args[i];
+                if (i > 0) fputs(" ", cg->out);
+                if (arg->type.kind == TY_STRING || arg->kind == EXPR_STRING) {
+                    fputs("hy_print_str(", cg->out);
+                    emit_expr(cg, arg);
+                    fputs("); ", cg->out);
+                } else {
+                    fputs("hy_print_int(", cg->out);
+                    emit_expr(cg, arg);
+                    fputs("); ", cg->out);
+                }
+            }
+            fputs("hy_println(); })", cg->out);
+            break;
+        }
+        fprintf(cg->out, "%.*s(", (int)name.len, name.data);
+        for (size_t i = 0; i < e->as.call.arg_count; i++) {
+            if (i) fputc(',', cg->out);
+            emit_expr(cg, e->as.call.args[i]);
+        }
+        fputc(')', cg->out);
+        break;
+    }
+    case EXPR_RECV:
+        fputs("(hy_recv(hy_coro_process(__coro), &__recv_msg), __recv_msg.value)", cg->out);
+        break;
+    }
+}
+
+static CoroDecl *find_coro(ProcessDecl *proc, HyloStr name) {
+    for (size_t i = 0; i < proc->coro_count; i++) {
+        if (hylo_str_eq(proc->coros[i].name, name)) return &proc->coros[i];
+    }
+    return NULL;
+}
+
+static void emit_coro_state_struct(Codegen *cg, CoroDecl *coro) {
+    fprintf(cg->out, "typedef struct {\n");
+    fprintf(cg->out, "    int _hylo_step;\n");
+    fprintf(cg->out, "    hy_process_t *proc;\n");
+    for (Param *p = coro->params; p; p = p->next) {
+        fprintf(cg->out, "    %s %.*s;\n", c_type(p->type), (int)p->name.len, p->name.data);
+    }
+    for (Stmt *s = coro->body.first; s; s = s->next) {
+        if (s->kind == STMT_LET) {
+            fprintf(cg->out, "    %s %.*s;\n", c_type(s->as.let.type),
+                    (int)s->as.let.name.len, s->as.let.name.data);
+        }
+    }
+    fprintf(cg->out, "} %.*s_state_t;\n\n", (int)coro->name.len, coro->name.data);
+}
+
+static int count_yield_points(Stmt *s) {
+    int n = 0;
+    while (s) {
+        switch (s->kind) {
+        case STMT_YIELD: n++; break;
+        case STMT_IF:
+            n += count_yield_points(s->as.if_stmt.then_br->first);
+            if (s->as.if_stmt.else_br) n += count_yield_points(s->as.if_stmt.else_br->first);
+            break;
+        case STMT_WHILE: n += count_yield_points(s->as.while_stmt.body->first); break;
+        case STMT_BLOCK: n += count_yield_points(s->as.block->first); break;
+        default: break;
+        }
+        s = s->next;
+    }
+    return n;
+}
+
+static void emit_coro_body(Codegen *cg, CoroDecl *coro, const char *state_var) {
+    int step = 0;
+    Stmt *s = coro->body.first;
+    while (s) {
+        if (s->kind == STMT_YIELD) {
+            cg_line(cg, "case %d:", step++);
+            cg_line(cg, "    hy_coro_set_step(__coro, %d);", step);
+            cg_line(cg, "    return hy_yield(__coro);");
+            cg_line(cg, "case %d:", step);
+            s = s->next;
+            continue;
+        }
+
+        if (s->kind == STMT_LET) {
+            if (step == 0 && s == coro->body.first) {
+                /* locals declared in struct */
+            } else {
+                cg_line(cg, "%s %.*s = ", c_type(s->as.let.type),
+                        (int)s->as.let.name.len, s->as.let.name.data);
+                if (s->as.let.init) emit_expr(cg, s->as.let.init);
+                else fputs("0", cg->out);
+                fputc(';', cg->out);
+                fputc('\n', cg->out);
+            }
+            s = s->next;
+            continue;
+        }
+
+        if (count_yield_points(s) > 0 || s->kind == STMT_IF || s->kind == STMT_WHILE || s->kind == STMT_BLOCK) {
+            cg_line(cg, "case %d:", step++);
+        }
+
+        switch (s->kind) {
+        case STMT_EXPR:
+            cg_indent(cg);
+            emit_expr(cg, s->as.expr);
+            fputs(";\n", cg->out);
+            break;
+        case STMT_RETURN:
+            cg_indent(cg);
+            if (s->as.ret) emit_expr(cg, s->as.ret);
+            fputs(";\n", cg->out);
+            cg_line(cg, "return HY_CORO_DONE;");
+            break;
+        case STMT_IF:
+            cg_line(cg, "if (");
+            emit_expr(cg, s->as.if_stmt.cond);
+            fputs(") {\n", cg->out);
+            cg->indent++;
+            emit_coro_body(cg, &(CoroDecl){ .body = *s->as.if_stmt.then_br }, state_var);
+            cg->indent--;
+            cg_indent(cg);
+            fputs("}", cg->out);
+            if (s->as.if_stmt.else_br) {
+                fputs(" else {\n", cg->out);
+                cg->indent++;
+                emit_coro_body(cg, &(CoroDecl){ .body = *s->as.if_stmt.else_br }, state_var);
+                cg->indent--;
+                cg_line(cg, "}");
+            } else {
+                fputc('\n', cg->out);
+            }
+            break;
+        case STMT_WHILE:
+            cg_line(cg, "while (");
+            emit_expr(cg, s->as.while_stmt.cond);
+            fputs(") {\n", cg->out);
+            cg->indent++;
+            emit_coro_body(cg, &(CoroDecl){ .body = *s->as.while_stmt.body }, state_var);
+            cg->indent--;
+            cg_line(cg, "}");
+            break;
+        case STMT_SPAWN:
+            cg_line(cg, "%.*s_spawn(%s->proc", (int)s->as.spawn.coro_name.len,
+                    s->as.spawn.coro_name.data, state_var);
+            for (size_t i = 0; i < s->as.spawn.arg_count; i++) {
+                fputs(", ", cg->out);
+                emit_expr(cg, s->as.spawn.args[i]);
+            }
+            fputs(");\n", cg->out);
+            break;
+        case STMT_SEND:
+            cg_indent(cg);
+            fputs("hy_send(", cg->out);
+            emit_expr(cg, s->as.send.target);
+            fprintf(cg->out, ", %d, ", s->as.send.tag);
+            emit_expr(cg, s->as.send.value);
+            fputs(", NULL, 0);\n", cg->out);
+            break;
+        case STMT_ASSIGN:
+            cg_indent(cg);
+            if (cg->state_prefix) fputs(cg->state_prefix, cg->out);
+            fprintf(cg->out, "%.*s = ", (int)s->as.assign.name.len, s->as.assign.name.data);
+            emit_expr(cg, s->as.assign.value);
+            fputs(";\n", cg->out);
+            break;
+        case STMT_BLOCK:
+            cg->indent++;
+            emit_coro_body(cg, &(CoroDecl){ .body = *s->as.block }, state_var);
+            cg->indent--;
+            break;
+        default:
+            break;
+        }
+        s = s->next;
+    }
+}
+
+static void emit_coro_fn(Codegen *cg, ProcessDecl *proc, CoroDecl *coro) {
+    emit_coro_state_struct(cg, coro);
+    fprintf(cg->out, "static hy_coro_status_t %.*s_fn(hy_coro_t *__coro, void *__userdata) {\n",
+            (int)coro->name.len, coro->name.data);
+    fprintf(cg->out, "    %.*s_state_t *%s = (%.*s_state_t *)__userdata;\n",
+            (int)coro->name.len, coro->name.data, "st",
+            (int)coro->name.len, coro->name.data);
+    fputs("    hy_msg_t __recv_msg;\n", cg->out);
+    fputs("    switch (hy_coro_step(__coro)) {\n", cg->out);
+    cg->indent++;
+    cg_line(cg, "default:");
+    const char *saved_prefix = cg->state_prefix;
+    cg->state_prefix = "st->";
+    emit_coro_body(cg, coro, "st");
+    cg->state_prefix = saved_prefix;
+    cg->indent--;
+    fputs("    }\n", cg->out);
+    fputs("    return HY_CORO_DONE;\n", cg->out);
+    fputs("}\n\n", cg->out);
+
+    fprintf(cg->out, "static void %.*s_spawn(hy_process_t *proc", (int)coro->name.len, coro->name.data);
+    for (Param *p = coro->params; p; p = p->next) {
+        fprintf(cg->out, ", %s %.*s", c_type(p->type), (int)p->name.len, p->name.data);
+    }
+    fputs(") {\n", cg->out);
+    fprintf(cg->out, "    %.*s_state_t *init = (%.*s_state_t *)calloc(1, sizeof(%.*s_state_t));\n",
+            (int)coro->name.len, coro->name.data,
+            (int)coro->name.len, coro->name.data,
+            (int)coro->name.len, coro->name.data);
+    fputs("    init->proc = proc;\n", cg->out);
+    for (Param *p = coro->params; p; p = p->next) {
+        fprintf(cg->out, "    init->%.*s = %.*s;\n", (int)p->name.len, p->name.data,
+                (int)p->name.len, p->name.data);
+    }
+    for (Stmt *s = coro->body.first; s; s = s->next) {
+        if (s->kind == STMT_LET && s->as.let.init) {
+            cg_indent(cg);
+            fprintf(cg->out, "init->%.*s = ", (int)s->as.let.name.len, s->as.let.name.data);
+            const char *saved = cg->state_prefix;
+            cg->state_prefix = "init->";
+            emit_expr(cg, s->as.let.init);
+            cg->state_prefix = saved;
+            fputs(";\n", cg->out);
+        }
+    }
+    fprintf(cg->out, "    hy_coro_spawn(proc, %.*s_fn, init, sizeof(%.*s_state_t));\n",
+            (int)coro->name.len, coro->name.data,
+            (int)coro->name.len, coro->name.data);
+    fputs("}\n\n", cg->out);
+}
+
+static void emit_stmts(Codegen *cg, Stmt *s, const char *proc_var, bool in_coro, const char *state_var) {
+    while (s) {
+        switch (s->kind) {
+        case STMT_LET:
+            cg_indent(cg);
+            fprintf(cg->out, "%s %.*s", c_type(s->as.let.type),
+                    (int)s->as.let.name.len, s->as.let.name.data);
+            if (s->as.let.init) {
+                fputs(" = ", cg->out);
+                emit_expr(cg, s->as.let.init);
+            }
+            fputs(";\n", cg->out);
+            break;
+        case STMT_EXPR:
+            cg_indent(cg);
+            emit_expr(cg, s->as.expr);
+            fputs(";\n", cg->out);
+            break;
+        case STMT_RETURN:
+            cg_indent(cg);
+            if (s->as.ret) emit_expr(cg, s->as.ret);
+            fputs(";\n", cg->out);
+            break;
+        case STMT_IF:
+            cg_indent(cg);
+            fputs("if (", cg->out);
+            emit_expr(cg, s->as.if_stmt.cond);
+            fputs(") {\n", cg->out);
+            cg->indent++;
+            emit_stmts(cg, s->as.if_stmt.then_br->first, proc_var, in_coro, state_var);
+            cg->indent--;
+            cg_indent(cg);
+            fputs("}", cg->out);
+            if (s->as.if_stmt.else_br) {
+                fputs(" else {\n", cg->out);
+                cg->indent++;
+                emit_stmts(cg, s->as.if_stmt.else_br->first, proc_var, in_coro, state_var);
+                cg->indent--;
+                cg_line(cg, "}");
+            } else {
+                fputc('\n', cg->out);
+            }
+            break;
+        case STMT_WHILE:
+            cg_indent(cg);
+            fputs("while (", cg->out);
+            emit_expr(cg, s->as.while_stmt.cond);
+            fputs(") {\n", cg->out);
+            cg->indent++;
+            emit_stmts(cg, s->as.while_stmt.body->first, proc_var, in_coro, state_var);
+            cg->indent--;
+            cg_line(cg, "}");
+            break;
+        case STMT_SPAWN:
+            cg_indent(cg);
+            fprintf(cg->out, "%.*s_spawn(%s", (int)s->as.spawn.coro_name.len,
+                    s->as.spawn.coro_name.data, proc_var);
+            for (size_t i = 0; i < s->as.spawn.arg_count; i++) {
+                fputs(", ", cg->out);
+                emit_expr(cg, s->as.spawn.args[i]);
+            }
+            fputs(");\n", cg->out);
+            break;
+        case STMT_SEND:
+            cg_indent(cg);
+            fputs("hy_send(", cg->out);
+            emit_expr(cg, s->as.send.target);
+            fprintf(cg->out, ", %d, ", s->as.send.tag);
+            emit_expr(cg, s->as.send.value);
+            fputs(", NULL, 0);\n", cg->out);
+            break;
+        case STMT_YIELD:
+            if (in_coro) cg_line(cg, "return hy_yield(__coro);");
+            break;
+        case STMT_ASSIGN:
+            cg_indent(cg);
+            fprintf(cg->out, "%.*s = ", (int)s->as.assign.name.len, s->as.assign.name.data);
+            emit_expr(cg, s->as.assign.value);
+            fputs(";\n", cg->out);
+            break;
+        case STMT_BLOCK:
+            cg->indent++;
+            emit_stmts(cg, s->as.block->first, proc_var, in_coro, state_var);
+            cg->indent--;
+            break;
+        }
+        s = s->next;
+    }
+}
+
+static ProcessDecl *find_process(Program *prog, HyloStr name) {
+    for (size_t i = 0; i < prog->process_count; i++) {
+        if (hylo_str_eq(prog->processes[i].name, name)) return &prog->processes[i];
+    }
+    return NULL;
+}
+
+void codegen_emit(Program *prog, FILE *out, const char *runtime_include) {
+    Codegen cg = { out, 0, prog, NULL };
+
+    fputs("// Generated by Hylo compiler (AOT -> C)\n", out);
+    fprintf(out, "#include \"%s\"\n", runtime_include);
+    fputs("#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n", out);
+
+    for (size_t i = 0; i < prog->process_count; i++) {
+        ProcessDecl *proc = &prog->processes[i];
+        for (size_t j = 0; j < proc->coro_count; j++) {
+            emit_coro_fn(&cg, proc, &proc->coros[j]);
+        }
+    }
+
+    for (size_t i = 0; i < prog->fn_count; i++) {
+        FnDecl *fn = &prog->functions[i];
+        fprintf(out, "static %s %.*s(", c_type(fn->ret_type), (int)fn->name.len, fn->name.data);
+        Param *p = fn->params;
+        bool first = true;
+        while (p) {
+            if (!first) fputs(", ", out);
+            fprintf(out, "%s %.*s", c_type(p->type), (int)p->name.len, p->name.data);
+            first = false;
+            p = p->next;
+        }
+        fputs(") {\n", out);
+        cg.indent = 1;
+        emit_stmts(&cg, fn->body.first, NULL, false, NULL);
+        cg.indent = 0;
+        fputs("}\n\n", out);
+    }
+
+    for (size_t i = 0; i < prog->process_count; i++) {
+        ProcessDecl *pd = &prog->processes[i];
+        if (!pd->body.first) continue;
+        fprintf(out, "static void %.*s_init(hy_process_t *proc) {\n", (int)pd->name.len, pd->name.data);
+        cg.indent = 1;
+        emit_stmts(&cg, pd->body.first, "proc", false, NULL);
+        cg.indent = 0;
+        fputs("}\n\n", out);
+    }
+
+    HyloStr entry_name = hylo_str("main");
+    ProcessDecl *entry = find_process(prog, entry_name);
+    if (!entry && prog->process_count > 0) entry = &prog->processes[0];
+
+    if (!entry) {
+        fputs("int main(void) { return 0; }\n", out);
+        return;
+    }
+
+    fputs("int main(void) {\n", out);
+  cg.indent = 1;
+    cg_line(&cg, "hy_scheduler_t *sched = hy_scheduler_create(1);");
+
+    for (size_t i = 0; i < prog->process_count; i++) {
+        ProcessDecl *pd = &prog->processes[i];
+        fprintf(out, "    hy_process_t *proc_%.*s = hy_process_create(\"%.*s\");\n",
+                (int)pd->name.len, pd->name.data, (int)pd->name.len, pd->name.data);
+        cg_line(&cg, "hy_scheduler_add_process(sched, proc_%.*s);", (int)pd->name.len, pd->name.data);
+    }
+
+    for (size_t i = 0; i < prog->supervisor_count; i++) {
+        SupervisorDecl *sup = &prog->supervisors[i];
+        const char *pol = "HY_RESTART_PROCESS";
+        if (sup->policy == SUP_RESTART_CORO) pol = "HY_RESTART_CORO";
+        else if (sup->policy == SUP_RESTART_ALL) pol = "HY_RESTART_ALL";
+        fprintf(out, "    hy_process_t *sup_%.*s = hy_supervisor_create(\"%.*s\", %s);\n",
+                (int)sup->name.len, sup->name.data, (int)sup->name.len, sup->name.data, pol);
+        for (size_t j = 0; j < sup->child_count; j++) {
+            ProcessDecl *child = find_process(prog, sup->children[j]);
+            if (child) {
+                fprintf(out, "    hy_supervisor_add_child(sup_%.*s, proc_%.*s);\n",
+                        (int)sup->name.len, sup->name.data,
+                        (int)child->name.len, child->name.data);
+            }
+        }
+        cg_line(&cg, "hy_scheduler_add_process(sched, sup_%.*s);", (int)sup->name.len, sup->name.data);
+    }
+
+    for (size_t i = 0; i < prog->process_count; i++) {
+        ProcessDecl *pd = &prog->processes[i];
+        if (pd->body.first) {
+            fprintf(out, "    %.*s_init(proc_%.*s);\n",
+                    (int)pd->name.len, pd->name.data,
+                    (int)pd->name.len, pd->name.data);
+        }
+    }
+
+    cg_line(&cg, "hy_scheduler_run(sched);");
+    cg_line(&cg, "hy_scheduler_destroy(sched);");
+    cg_line(&cg, "return 0;");
+    cg.indent = 0;
+    fputs("}\n", out);
+}
