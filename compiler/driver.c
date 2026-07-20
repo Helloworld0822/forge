@@ -149,8 +149,8 @@ static int link_object(const char *obj_path, const char *output_path, const Forg
         snprintf(lib, n, "-l%s", cfg->link_libs[i]);
         argv_push(&args, lib);
     }
-    argv_push(&args, "-lforge_runtime");
     argv_push(&args, "-lforge_std");
+    argv_push(&args, "-lforge_runtime");
     argv_push(&args, "-lm");
     int rc = exec_argv(&args);
     argv_free(&args);

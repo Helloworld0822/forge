@@ -5,6 +5,7 @@
 #include <string.h>
 
 #if !defined(FORGE_OS_WINDOWS)
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -82,6 +83,17 @@ int fr_sock_set_tcp_nodelay(int fd) {
     return setsockopt((SOCKET)fd, IPPROTO_TCP, TCP_NODELAY, (const char *)&yes, sizeof(yes));
 #else
     return setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
+#endif
+}
+
+int fr_sock_set_nonblocking(int fd) {
+#if defined(FORGE_OS_WINDOWS)
+    u_long mode = 1;
+    return ioctlsocket((SOCKET)fd, FIONBIO, &mode);
+#else
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) return -1;
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 #endif
 }
 
