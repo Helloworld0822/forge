@@ -51,6 +51,7 @@ ssize_t fr_sock_send(int fd, const void *buf, size_t len);
 ssize_t fr_sock_recv(int fd, void *buf, size_t len);
 int fr_sock_set_tcp_nodelay(int fd);
 int fr_sock_set_nonblocking(int fd);
+int fr_sock_accept_nb(int listen_fd);
 void fr_sock_close(int fd);
 
 int fr_path_exists(const char *path);

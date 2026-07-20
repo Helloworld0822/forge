@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#define _GNU_SOURCE
 #include "forge/platform.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -94,6 +95,17 @@ int fr_sock_set_nonblocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags < 0) return -1;
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+#endif
+}
+
+int fr_sock_accept_nb(int listen_fd) {
+#if defined(FORGE_OS_LINUX)
+    return (int)accept4(listen_fd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+#else
+    fr_socket_t client = accept((fr_socket_t)listen_fd, NULL, NULL);
+    if (client == FR_SOCK_INVALID) return -1;
+    fr_sock_set_nonblocking((int)client);
+    return (int)client;
 #endif
 }
 
