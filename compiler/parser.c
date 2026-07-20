@@ -66,6 +66,26 @@ static Expr *parse_primary(Parser *p) {
     case TOK_IDENT: {
         HyloStr name = token_str(t);
         lexer_next(p->lx);
+        if (lexer_match(p->lx, TOK_DOT)) {
+            Token fn = lexer_peek(p->lx);
+            expect(p, TOK_IDENT);
+            if (lexer_match(p->lx, TOK_LPAREN)) {
+                Expr **args = NULL;
+                size_t n = 0, cap = 0;
+                if (!lexer_match(p->lx, TOK_RPAREN)) {
+                    do {
+                        if (n == cap) {
+                            cap = cap ? cap * 2 : 4;
+                            args = (Expr **)realloc(args, cap * sizeof(Expr *));
+                        }
+                        args[n++] = parse_expr(p);
+                    } while (lexer_match(p->lx, TOK_COMMA));
+                    expect(p, TOK_RPAREN);
+                }
+                return expr_qual_call(name, token_str(fn), args, n);
+            }
+            parser_error(p, "expected '(' after qualified name");
+        }
         if (lexer_match(p->lx, TOK_LPAREN)) {
             Expr **args = NULL;
             size_t n = 0, cap = 0;
@@ -311,8 +331,7 @@ static Param *parse_params(Parser *p) {
     return head;
 }
 
-static FnDecl parse_fn(Parser *p) {
-    expect(p, TOK_KW_FN);
+static FnDecl parse_fn_body(Parser *p) {
     Token name = lexer_peek(p->lx);
     expect(p, TOK_IDENT);
     expect(p, TOK_LPAREN);
@@ -323,6 +342,11 @@ static FnDecl parse_fn(Parser *p) {
     FnDecl fn = { token_str(name), params, ret, *body };
     free(body);
     return fn;
+}
+
+static FnDecl parse_fn(Parser *p) {
+    expect(p, TOK_KW_FN);
+    return parse_fn_body(p);
 }
 
 static CoroDecl parse_coroutine(Parser *p) {
@@ -413,13 +437,56 @@ static SupervisorDecl parse_supervisor(Parser *p) {
     return sup;
 }
 
+static LibraryDecl parse_library(Parser *p) {
+    expect(p, TOK_KW_LIBRARY);
+    Token name = lexer_peek(p->lx);
+    expect(p, TOK_IDENT);
+    expect(p, TOK_LBRACE);
+
+    LibraryDecl lib = {0};
+    lib.name = token_str(name);
+    lib.present = true;
+
+    while (lexer_peek(p->lx).kind != TOK_RBRACE) {
+        if (lexer_match(p->lx, TOK_KW_IMPORT)) {
+            Token mod = lexer_peek(p->lx);
+            expect(p, TOK_IDENT);
+            expect(p, TOK_SEMI);
+            lib.import_count++;
+            lib.imports = (HyloStr *)realloc(lib.imports, lib.import_count * sizeof(HyloStr));
+            lib.imports[lib.import_count - 1] = token_str(mod);
+        } else if (lexer_match(p->lx, TOK_KW_EXPORT)) {
+            expect(p, TOK_KW_FN);
+            FnDecl fn = parse_fn_body(p);
+            lib.fn_count++;
+            lib.functions = (FnDecl *)realloc(lib.functions, lib.fn_count * sizeof(FnDecl));
+            lib.functions[lib.fn_count - 1] = fn;
+        } else {
+            parser_error(p, "expected import or export in library");
+        }
+    }
+    expect(p, TOK_RBRACE);
+    return lib;
+}
+
 Program parse_program(Lexer *lx) {
     Parser p = { lx };
     Program prog = {0};
 
     while (lexer_peek(p.lx).kind != TOK_EOF) {
         Token t = lexer_peek(p.lx);
-        if (t.kind == TOK_KW_PROCESS) {
+        if (t.kind == TOK_KW_IMPORT) {
+            lexer_next(p.lx);
+            Token mod = lexer_peek(p.lx);
+            expect(&p, TOK_IDENT);
+            expect(&p, TOK_SEMI);
+            prog.import_count++;
+            prog.imports = (HyloStr *)realloc(prog.imports, prog.import_count * sizeof(HyloStr));
+            prog.imports[prog.import_count - 1] = token_str(mod);
+        } else if (t.kind == TOK_KW_LIBRARY) {
+            if (prog.library.present) parser_error(&p, "only one library per file");
+            prog.library = parse_library(&p);
+        } else if (t.kind == TOK_KW_PROCESS) {
             prog.process_count++;
             prog.processes = (ProcessDecl *)realloc(prog.processes, prog.process_count * sizeof(ProcessDecl));
             prog.processes[prog.process_count - 1] = parse_process(&p);

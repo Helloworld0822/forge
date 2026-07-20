@@ -1,12 +1,77 @@
 #include "codegen.h"
+#include "mod_registry.h"
 #include <stdarg.h>
+#include <string.h>
 
 typedef struct {
     FILE *out;
     int indent;
     Program *prog;
     const char *state_prefix;
+    struct HyloLocal { HyloStr name; HyloType type; } *locals;
+    size_t local_count;
+    size_t local_cap;
+    HyloStr *imports;
+    size_t import_count;
 } Codegen;
+
+static void cg_push_local(Codegen *cg, HyloStr name, HyloType ty) {
+    for (size_t i = 0; i < cg->local_count; i++) {
+        if (hylo_str_eq(cg->locals[i].name, name)) {
+            cg->locals[i].type = ty;
+            return;
+        }
+    }
+    if (cg->local_count == cg->local_cap) {
+        cg->local_cap = cg->local_cap ? cg->local_cap * 2 : 8;
+        cg->locals = (struct HyloLocal *)realloc(cg->locals, cg->local_cap * sizeof(struct HyloLocal));
+    }
+    cg->locals[cg->local_count].name = name;
+    cg->locals[cg->local_count].type = ty;
+    cg->local_count++;
+}
+
+static HyloType cg_lookup_local(Codegen *cg, HyloStr name) {
+    for (size_t i = 0; i < cg->local_count; i++) {
+        if (hylo_str_eq(cg->locals[i].name, name)) return cg->locals[i].type;
+    }
+    return hylo_type_int();
+}
+
+static int cg_stdlib_returns_string(Codegen *cg, HyloStr name) {
+    const char *mapped = hylo_std_c_name(name, cg->imports, cg->import_count);
+    if (!mapped) return 0;
+    static const char *str_fns[] = {
+        "hy_str_concat", "hy_str_sub", "hy_str_trim", "hy_fs_read",
+        "hy_tcp_recv", "hy_udp_recv", "hy_http_get", "hy_http_post",
+        "hy_http_req_method", "hy_http_req_path", "hy_http_req_body",
+        "hy_json_get_string", "hy_json_stringify_str", "hy_json_stringify_int",
+        "hy_udp_peer", "hy_os_getenv", "hy_os_argv", NULL
+    };
+    for (int i = 0; str_fns[i]; i++) {
+        if (strcmp(mapped, str_fns[i]) == 0) return 1;
+    }
+    return 0;
+}
+
+static int qual_call_returns_string(HyloStr fn) {
+    static const char *names[] = {
+        "hello", "greet", "shout", "format", "read", "recv", "get", "path", "body",
+        "peer", "concat", "trim", "sub", "message", NULL
+    };
+    for (int i = 0; names[i]; i++) {
+        if (hylo_str_eq(fn, hylo_str(names[i]))) return 1;
+    }
+    return 0;
+}
+
+static int cg_expr_is_string(Codegen *cg, Expr *e) {
+    if (e->kind == EXPR_STRING) return 1;
+    if (e->kind == EXPR_IDENT) return cg_lookup_local(cg, e->as.ident).kind == TY_STRING;
+    if (e->kind == EXPR_CALL) return cg_stdlib_returns_string(cg, e->as.call.name);
+    if (e->kind == EXPR_QUAL_CALL) return qual_call_returns_string(e->as.qual_call.name);
+    return 0;
+}
 
 static void cg_indent(Codegen *cg) {
     for (int i = 0; i < cg->indent; i++) fputs("    ", cg->out);
@@ -91,7 +156,7 @@ static void emit_expr(Codegen *cg, Expr *e) {
             for (size_t i = 0; i < e->as.call.arg_count; i++) {
                 Expr *arg = e->as.call.args[i];
                 if (i > 0) fputs(" ", cg->out);
-                if (arg->type.kind == TY_STRING || arg->kind == EXPR_STRING) {
+                if (cg_expr_is_string(cg, arg)) {
                     fputs("hy_print_str(", cg->out);
                     emit_expr(cg, arg);
                     fputs("); ", cg->out);
@@ -104,7 +169,12 @@ static void emit_expr(Codegen *cg, Expr *e) {
             fputs("hy_println(); })", cg->out);
             break;
         }
-        fprintf(cg->out, "%.*s(", (int)name.len, name.data);
+        const char *c_fn = hylo_std_c_name(name, cg->imports, cg->import_count);
+        if (c_fn) {
+            fprintf(cg->out, "%s(", c_fn);
+        } else {
+            fprintf(cg->out, "%.*s(", (int)name.len, name.data);
+        }
         for (size_t i = 0; i < e->as.call.arg_count; i++) {
             if (i) fputc(',', cg->out);
             emit_expr(cg, e->as.call.args[i]);
@@ -115,6 +185,17 @@ static void emit_expr(Codegen *cg, Expr *e) {
     case EXPR_RECV:
         fputs("(hy_recv(hy_coro_process(__coro), &__recv_msg), __recv_msg.value)", cg->out);
         break;
+    case EXPR_QUAL_CALL: {
+        char sym[128];
+        hylo_lib_mangle(sym, sizeof(sym), e->as.qual_call.module, e->as.qual_call.name);
+        fprintf(cg->out, "%s(", sym);
+        for (size_t i = 0; i < e->as.qual_call.arg_count; i++) {
+            if (i) fputc(',', cg->out);
+            emit_expr(cg, e->as.qual_call.args[i]);
+        }
+        fputc(')', cg->out);
+        break;
+    }
     }
 }
 
@@ -280,8 +361,14 @@ static void emit_coro_fn(Codegen *cg, ProcessDecl *proc, CoroDecl *coro) {
     cg_line(cg, "default:");
     const char *saved_prefix = cg->state_prefix;
     cg->state_prefix = "st->";
+    cg->local_count = 0;
+    for (Param *p = coro->params; p; p = p->next) cg_push_local(cg, p->name, p->type);
+    for (Stmt *s = coro->body.first; s; s = s->next) {
+        if (s->kind == STMT_LET) cg_push_local(cg, s->as.let.name, s->as.let.type);
+    }
     emit_coro_body(cg, coro, "st");
     cg->state_prefix = saved_prefix;
+    cg->local_count = 0;
     cg->indent--;
     fputs("    }\n", cg->out);
     fputs("    return HY_CORO_DONE;\n", cg->out);
@@ -322,6 +409,7 @@ static void emit_stmts(Codegen *cg, Stmt *s, const char *proc_var, bool in_coro,
     while (s) {
         switch (s->kind) {
         case STMT_LET:
+            cg_push_local(cg, s->as.let.name, s->as.let.type);
             cg_indent(cg);
             fprintf(cg->out, "%s %.*s", c_type(s->as.let.type),
                     (int)s->as.let.name.len, s->as.let.name.data);
@@ -338,6 +426,7 @@ static void emit_stmts(Codegen *cg, Stmt *s, const char *proc_var, bool in_coro,
             break;
         case STMT_RETURN:
             cg_indent(cg);
+            fputs("return ", cg->out);
             if (s->as.ret) emit_expr(cg, s->as.ret);
             fputs(";\n", cg->out);
             break;
@@ -415,12 +504,85 @@ static ProcessDecl *find_process(Program *prog, HyloStr name) {
     return NULL;
 }
 
+static void emit_import_headers(Program *prog, FILE *out) {
+    for (size_t i = 0; i < prog->import_count; i++) {
+        const char *hdr = hylo_std_header(prog->imports[i]);
+        if (hdr) fprintf(out, "#include \"%s\"\n", hdr);
+        else fprintf(out, "#include \"%.*s.h\"\n", (int)prog->imports[i].len, prog->imports[i].data);
+    }
+}
+
+static void emit_fn_signature(FILE *out, const char *name, FnDecl *fn) {
+    fprintf(out, "%s %s(", c_type(fn->ret_type), name);
+    Param *p = fn->params;
+    bool first = true;
+    while (p) {
+        if (!first) fputs(", ", out);
+        fprintf(out, "%s %.*s", c_type(p->type), (int)p->name.len, p->name.data);
+        first = false;
+        p = p->next;
+    }
+    fputs(")", out);
+}
+
+void codegen_emit_library(Program *prog, FILE *out_c, FILE *out_h, const char *runtime_include) {
+    if (!prog->library.present) {
+        fprintf(stderr, "hylo: no library block found\n");
+        exit(1);
+    }
+    LibraryDecl *lib = &prog->library;
+    char guard[128];
+    snprintf(guard, sizeof(guard), "HYLIB_%.*s_H", (int)lib->name.len, lib->name.data);
+    for (char *p = guard; *p; p++) {
+        if (*p >= 'a' && *p <= 'z') *p = (char)(*p - 'a' + 'A');
+    }
+
+    fprintf(out_h, "#ifndef %s\n#define %s\n\n", guard, guard);
+    fprintf(out_h, "#include <stdint.h>\n\n");
+    for (size_t i = 0; i < lib->fn_count; i++) {
+        char sym[128];
+        hylo_lib_mangle(sym, sizeof(sym), lib->name, lib->functions[i].name);
+        emit_fn_signature(out_h, sym, &lib->functions[i]);
+        fputs(";\n", out_h);
+    }
+    fprintf(out_h, "\n#endif\n");
+
+    fprintf(out_c, "// Generated by Hylo compiler (library mode)\n");
+    fprintf(out_c, "#include \"%.*s.h\"\n", (int)lib->name.len, lib->name.data);
+    fprintf(out_c, "#include \"%s\"\n", runtime_include);
+    fputs("#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n", out_c);
+    for (size_t i = 0; i < lib->import_count; i++) {
+        const char *hdr = hylo_std_header(lib->imports[i]);
+        if (hdr) fprintf(out_c, "#include \"%s\"\n", hdr);
+        else fprintf(out_c, "#include \"%.*s.h\"\n", (int)lib->imports[i].len, lib->imports[i].data);
+    }
+    fputs("\n", out_c);
+
+    Codegen cg = { out_c, 0, prog, NULL, NULL, 0, 0, lib->imports, lib->import_count };
+    for (size_t i = 0; i < lib->fn_count; i++) {
+        FnDecl *fn = &lib->functions[i];
+        char sym[128];
+        hylo_lib_mangle(sym, sizeof(sym), lib->name, fn->name);
+        emit_fn_signature(out_c, sym, fn);
+        fputs(" {\n", out_c);
+        cg.indent = 1;
+        cg.local_count = 0;
+        emit_stmts(&cg, fn->body.first, NULL, false, NULL);
+        cg.indent = 0;
+        fputs("}\n\n", out_c);
+    }
+    free(cg.locals);
+}
+
 void codegen_emit(Program *prog, FILE *out, const char *runtime_include) {
-    Codegen cg = { out, 0, prog, NULL };
+    Codegen cg = { out, 0, prog, NULL, NULL, 0, 0, prog->imports, prog->import_count };
 
     fputs("// Generated by Hylo compiler (AOT -> C)\n", out);
     fprintf(out, "#include \"%s\"\n", runtime_include);
-    fputs("#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n", out);
+    fputs("#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n", out);
+    fputs("#include \"hylo/os.h\"\n", out);
+    emit_import_headers(prog, out);
+    fputs("\n", out);
 
     for (size_t i = 0; i < prog->process_count; i++) {
         ProcessDecl *proc = &prog->processes[i];
@@ -452,6 +614,7 @@ void codegen_emit(Program *prog, FILE *out, const char *runtime_include) {
         if (!pd->body.first) continue;
         fprintf(out, "static void %.*s_init(hy_process_t *proc) {\n", (int)pd->name.len, pd->name.data);
         cg.indent = 1;
+        cg.local_count = 0;
         emit_stmts(&cg, pd->body.first, "proc", false, NULL);
         cg.indent = 0;
         fputs("}\n\n", out);
@@ -466,8 +629,9 @@ void codegen_emit(Program *prog, FILE *out, const char *runtime_include) {
         return;
     }
 
-    fputs("int main(void) {\n", out);
+    fputs("int main(int argc, char **argv) {\n", out);
   cg.indent = 1;
+    cg_line(&cg, "hy_os_set_args(argc, argv);");
     cg_line(&cg, "hy_scheduler_t *sched = hy_scheduler_create(1);");
 
     for (size_t i = 0; i < prog->process_count; i++) {
@@ -509,4 +673,5 @@ void codegen_emit(Program *prog, FILE *out, const char *runtime_include) {
     cg_line(&cg, "return 0;");
     cg.indent = 0;
     fputs("}\n", out);
+    free(cg.locals);
 }

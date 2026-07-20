@@ -23,6 +23,7 @@ typedef enum {
     EXPR_IDENT,
     EXPR_BINARY,
     EXPR_CALL,
+    EXPR_QUAL_CALL,
     EXPR_RECV
 } ExprKind;
 
@@ -57,6 +58,12 @@ struct Expr {
             Expr **args;
             size_t arg_count;
         } call;
+        struct {
+            HyloStr module;
+            HyloStr name;
+            Expr **args;
+            size_t arg_count;
+        } qual_call;
     } as;
 };
 
@@ -152,6 +159,18 @@ typedef struct {
 } SupervisorDecl;
 
 typedef struct {
+    HyloStr name;
+    HyloStr *imports;
+    size_t import_count;
+    FnDecl *functions;
+    size_t fn_count;
+    bool present;
+} LibraryDecl;
+
+typedef struct {
+    HyloStr *imports;
+    size_t import_count;
+    LibraryDecl library;
     ProcessDecl *processes;
     size_t process_count;
     FnDecl *functions;
@@ -174,6 +193,7 @@ Expr *expr_string(HyloStr v);
 Expr *expr_ident(HyloStr name);
 Expr *expr_binary(BinOp op, Expr *l, Expr *r);
 Expr *expr_call(HyloStr name, Expr **args, size_t n);
+Expr *expr_qual_call(HyloStr module, HyloStr name, Expr **args, size_t n);
 Expr *expr_recv(void);
 
 Block block_new(void);

@@ -49,6 +49,9 @@ static TokenKind keyword_kind(HyloStr s) {
         {"int", TOK_KW_INT}, {"float", TOK_KW_FLOAT},
         {"bool", TOK_KW_BOOL}, {"string", TOK_KW_STRING}, {"void", TOK_KW_VOID},
         {"restart", TOK_KW_RESTART},
+        {"import", TOK_KW_IMPORT},
+        {"library", TOK_KW_LIBRARY},
+        {"export", TOK_KW_EXPORT},
     };
     for (size_t i = 0; i < sizeof(kws) / sizeof(kws[0]); i++) {
         HyloStr kw = hylo_str(kws[i].kw);

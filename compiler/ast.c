@@ -73,6 +73,15 @@ Expr *expr_call(HyloStr name, Expr **args, size_t n) {
     return e;
 }
 
+Expr *expr_qual_call(HyloStr module, HyloStr name, Expr **args, size_t n) {
+    Expr *e = expr_new(EXPR_QUAL_CALL);
+    e->as.qual_call.module = module;
+    e->as.qual_call.name = name;
+    e->as.qual_call.args = args;
+    e->as.qual_call.arg_count = n;
+    return e;
+}
+
 Expr *expr_recv(void) {
     Expr *e = expr_new(EXPR_RECV);
     e->type = hylo_type_int();
@@ -179,6 +188,10 @@ static void free_expr(Expr *e) {
         for (size_t i = 0; i < e->as.call.arg_count; i++) free_expr(e->as.call.args[i]);
         free(e->as.call.args);
         break;
+    case EXPR_QUAL_CALL:
+        for (size_t i = 0; i < e->as.qual_call.arg_count; i++) free_expr(e->as.qual_call.args[i]);
+        free(e->as.qual_call.args);
+        break;
     default:
         break;
     }
@@ -230,6 +243,14 @@ static void free_stmts(Stmt *s) {
 }
 
 void program_free(Program *p) {
+    free(p->imports);
+    if (p->library.present) {
+        free(p->library.imports);
+        for (size_t i = 0; i < p->library.fn_count; i++) {
+            free_stmts(p->library.functions[i].body.first);
+        }
+        free(p->library.functions);
+    }
     for (size_t i = 0; i < p->process_count; i++) {
         ProcessDecl *pd = &p->processes[i];
         free_stmts(pd->body.first);

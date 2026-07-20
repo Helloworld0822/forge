@@ -18,7 +18,7 @@ static char *read_file(const char *path, size_t *out_len) {
     char *buf = (char *)malloc((size_t)sz + 1);
     if (!buf) hylo_die("out of memory");
     size_t n = fread(buf, 1, (size_t)sz, f);
-  buf[n] = '\0';
+    buf[n] = '\0';
     fclose(f);
     *out_len = n;
     return buf;
@@ -26,7 +26,9 @@ static char *read_file(const char *path, size_t *out_len) {
 
 static void usage(const char *prog) {
     fprintf(stderr, "Hylo %s - Hybrid Process + Coroutine language (AOT -> C)\n", HYLO_VERSION);
-    fprintf(stderr, "Usage: %s <input.hy> [-o output.c]\n", prog);
+    fprintf(stderr, "Usage:\n");
+    fprintf(stderr, "  %s <input.hy> [-o output.c] [-I include-dir]\n", prog);
+    fprintf(stderr, "  %s --lib <input.hy> -o output.c --header output.h\n", prog);
 }
 
 int main(int argc, char **argv) {
@@ -35,12 +37,32 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    const char *input = argv[1];
+    bool lib_mode = false;
+    const char *input = NULL;
     const char *output = NULL;
-    for (int i = 2; i < argc; i++) {
-        if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
+    const char *header = NULL;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--lib") == 0) {
+            lib_mode = true;
+        } else if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
             output = argv[++i];
+        } else if (strcmp(argv[i], "--header") == 0 && i + 1 < argc) {
+            header = argv[++i];
+        } else if (strcmp(argv[i], "-I") == 0) {
+            i++;
+        } else if (argv[i][0] != '-') {
+            input = argv[i];
         }
+    }
+
+    if (!input) {
+        usage(argv[0]);
+        return 1;
+    }
+    if (lib_mode && !header) {
+        fprintf(stderr, "hylo: library mode requires --header\n");
+        return 1;
     }
 
     size_t len = 0;
@@ -50,18 +72,33 @@ int main(int argc, char **argv) {
     lexer_init(&lx, src, len);
     Program prog = parse_program(&lx);
 
-    FILE *out = stdout;
-    if (output) {
-        out = fopen(output, "w");
-        if (!out) {
-            fprintf(stderr, "hylo: cannot write '%s'\n", output);
-            free(src);
+    if (lib_mode) {
+        if (!output) {
+            fprintf(stderr, "hylo: library mode requires -o\n");
             return 1;
         }
+        FILE *out_c = fopen(output, "w");
+        FILE *out_h = fopen(header, "w");
+        if (!out_c || !out_h) {
+            fprintf(stderr, "hylo: cannot write library output\n");
+            return 1;
+        }
+        codegen_emit_library(&prog, out_c, out_h, "hylo_runtime.h");
+        fclose(out_c);
+        fclose(out_h);
+    } else {
+        FILE *out = stdout;
+        if (output) {
+            out = fopen(output, "w");
+            if (!out) {
+                fprintf(stderr, "hylo: cannot write '%s'\n", output);
+                free(src);
+                return 1;
+            }
+        }
+        codegen_emit(&prog, out, "hylo_runtime.h");
+        if (output) fclose(out);
     }
-
-    codegen_emit(&prog, out, "hylo_runtime.h");
-    if (output) fclose(out);
 
     program_free(&prog);
     free(src);
