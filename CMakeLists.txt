@@ -161,6 +161,17 @@ add_custom_command(
 )
 add_custom_target(forge-selfhost-test DEPENDS "${FORGE_SELFHOST_TEST_C}")
 
+set(FORGE_SELFHOST_CONTROL_C "${CMAKE_BINARY_DIR}/generated/selfhost_control_flow.c")
+add_custom_command(
+    OUTPUT "${FORGE_SELFHOST_CONTROL_C}"
+    COMMAND "${FORGE_STAGE2_BIN}" "${CMAKE_SOURCE_DIR}/examples/control_flow.fg"
+        -o "${FORGE_SELFHOST_CONTROL_C}"
+    DEPENDS forge-selfhost "${CMAKE_SOURCE_DIR}/examples/control_flow.fg"
+    COMMENT "Self-host test: stage2 compiles control_flow.fg"
+    VERBATIM
+)
+add_custom_target(forge-selfhost-control DEPENDS "${FORGE_SELFHOST_CONTROL_C}")
+
 # Benchmark HTTP server (Forge)
 set(FORGE_BENCH_SRC "${CMAKE_SOURCE_DIR}/benchmark/forge/bench_server.fg")
 set(FORGE_BENCH_BIN "${CMAKE_BINARY_DIR}/bin/bench_server")

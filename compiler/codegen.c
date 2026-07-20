@@ -565,6 +565,34 @@ static void emit_coro_fn(Codegen *cg, ProcessDecl *proc, CoroDecl *coro) {
     fputs("}\n\n", cg->out);
 }
 
+static void emit_if_stmt(Codegen *cg, Stmt *s, const char *proc_var, bool in_coro, const char *state_var) {
+    cg_indent(cg);
+    fputs("if (", cg->out);
+    emit_expr(cg, s->as.if_stmt.cond);
+    fputs(") {\n", cg->out);
+    cg->indent++;
+    emit_stmts(cg, s->as.if_stmt.then_br->first, proc_var, in_coro, state_var);
+    cg->indent--;
+    cg_indent(cg);
+    fputs("}", cg->out);
+    if (s->as.if_stmt.else_br) {
+        Stmt *es = s->as.if_stmt.else_br->first;
+        if (es && !es->next && es->kind == STMT_IF) {
+            fputs(" else ", cg->out);
+            emit_if_stmt(cg, es, proc_var, in_coro, state_var);
+            fputc('\n', cg->out);
+        } else {
+            fputs(" else {\n", cg->out);
+            cg->indent++;
+            emit_stmts(cg, s->as.if_stmt.else_br->first, proc_var, in_coro, state_var);
+            cg->indent--;
+            cg_line(cg, "}");
+        }
+    } else {
+        fputc('\n', cg->out);
+    }
+}
+
 static void emit_stmts(Codegen *cg, Stmt *s, const char *proc_var, bool in_coro, const char *state_var) {
     while (s) {
         switch (s->kind) {
@@ -591,24 +619,7 @@ static void emit_stmts(Codegen *cg, Stmt *s, const char *proc_var, bool in_coro,
             fputs(";\n", cg->out);
             break;
         case STMT_IF:
-            cg_indent(cg);
-            fputs("if (", cg->out);
-            emit_expr(cg, s->as.if_stmt.cond);
-            fputs(") {\n", cg->out);
-            cg->indent++;
-            emit_stmts(cg, s->as.if_stmt.then_br->first, proc_var, in_coro, state_var);
-            cg->indent--;
-            cg_indent(cg);
-            fputs("}", cg->out);
-            if (s->as.if_stmt.else_br) {
-                fputs(" else {\n", cg->out);
-                cg->indent++;
-                emit_stmts(cg, s->as.if_stmt.else_br->first, proc_var, in_coro, state_var);
-                cg->indent--;
-                cg_line(cg, "}");
-            } else {
-                fputc('\n', cg->out);
-            }
+            emit_if_stmt(cg, s, proc_var, in_coro, state_var);
             break;
         case STMT_WHILE:
             cg_line(cg, "while (");
