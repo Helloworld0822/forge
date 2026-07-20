@@ -91,6 +91,13 @@ Expr *expr_recv(void) {
     return e;
 }
 
+Expr *expr_move(Expr *inner) {
+    Expr *e = expr_new(EXPR_MOVE);
+    e->as.move_expr = inner;
+    e->type = inner->type;
+    return e;
+}
+
 Expr *expr_index(Expr *base, Expr *index) {
     Expr *e = expr_new(EXPR_INDEX);
     e->as.index.base = base;
@@ -127,9 +134,10 @@ static Stmt *stmt_new(int kind) {
     return s;
 }
 
-Stmt *stmt_let(bool mut, ForgeStr name, ForgeType ty, Expr *init) {
+Stmt *stmt_let(bool mut, bool owned, ForgeStr name, ForgeType ty, Expr *init) {
     Stmt *s = stmt_new(STMT_LET);
     s->as.let.mutable_ = mut;
+    s->as.let.owned_ = owned;
     s->as.let.name = name;
     s->as.let.type = ty;
     s->as.let.init = init;
@@ -180,16 +188,23 @@ Stmt *stmt_spawn(ForgeStr name, Expr **args, size_t n) {
     return s;
 }
 
-Stmt *stmt_send(Expr *target, int tag, Expr *value) {
+Stmt *stmt_send(Expr *target, int tag, Expr *value, bool move_) {
     Stmt *s = stmt_new(STMT_SEND);
     s->as.send.target = target;
     s->as.send.tag = tag;
     s->as.send.value = value;
+    s->as.send.move_ = move_;
     return s;
 }
 
 Stmt *stmt_yield(void) {
     return stmt_new(STMT_YIELD);
+}
+
+Stmt *stmt_await(Expr *e) {
+    Stmt *s = stmt_new(STMT_AWAIT);
+    s->as.await_expr = e;
+    return s;
 }
 
 Stmt *stmt_assign(ForgeStr name, Expr *value) {
@@ -229,6 +244,9 @@ static void free_expr(Expr *e) {
         break;
     case EXPR_FIELD:
         free_expr(e->as.field.base);
+        break;
+    case EXPR_MOVE:
+        free_expr(e->as.move_expr);
         break;
     default:
         break;
@@ -274,6 +292,9 @@ static void free_stmts(Stmt *s) {
             break;
         case STMT_ASSIGN:
             free_expr(s->as.assign.value);
+            break;
+        case STMT_AWAIT:
+            free_expr(s->as.await_expr);
             break;
         case STMT_BLOCK:
             free_stmts(s->as.block->first);

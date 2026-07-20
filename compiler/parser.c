@@ -142,6 +142,9 @@ static Expr *parse_primary(Parser *p) {
 }
 
 static Expr *parse_unary(Parser *p) {
+    if (lexer_match(p->lx, TOK_KW_MOVE)) {
+        return parse_postfix(p, expr_move(parse_unary(p)));
+    }
     if (lexer_match(p->lx, TOK_MINUS)) {
         return parse_postfix(p, expr_binary(BIN_SUB, expr_int(0), parse_unary(p)));
     }
@@ -224,6 +227,17 @@ static Stmt *parse_stmt(Parser *p) {
         expect(p, TOK_SEMI);
         return stmt_continue();
     }
+    if (lexer_match(p->lx, TOK_KW_OWN)) {
+        expect(p, TOK_KW_LET);
+        Token name = lexer_peek(p->lx);
+        expect(p, TOK_IDENT);
+        ForgeType ty = forge_type_string();
+        if (lexer_match(p->lx, TOK_COLON)) ty = parse_type(p);
+        Expr *init = NULL;
+        if (lexer_match(p->lx, TOK_EQ)) init = parse_expr(p);
+        expect(p, TOK_SEMI);
+        return stmt_let(false, true, token_str(name), ty, init);
+    }
     if (lexer_match(p->lx, TOK_KW_LET) || lexer_match(p->lx, TOK_KW_MUT)) {
         bool mut = false;
         if (lexer_peek(p->lx).kind == TOK_KW_MUT) {
@@ -237,7 +251,7 @@ static Stmt *parse_stmt(Parser *p) {
         Expr *init = NULL;
         if (lexer_match(p->lx, TOK_EQ)) init = parse_expr(p);
         expect(p, TOK_SEMI);
-        return stmt_let(mut, token_str(name), ty, init);
+        return stmt_let(mut, false, token_str(name), ty, init);
     }
     if (lexer_match(p->lx, TOK_KW_RETURN)) {
         Expr *e = NULL;
@@ -271,16 +285,19 @@ static Stmt *parse_stmt(Parser *p) {
     if (lexer_match(p->lx, TOK_KW_FOR)) {
         expect(p, TOK_LPAREN);
         Stmt *init = NULL;
-        if (lexer_peek(p->lx).kind == TOK_KW_LET || lexer_peek(p->lx).kind == TOK_KW_MUT) {
-            bool mut = lexer_match(p->lx, TOK_KW_MUT);
-            if (!mut) expect(p, TOK_KW_LET);
+        if (lexer_peek(p->lx).kind == TOK_KW_LET || lexer_peek(p->lx).kind == TOK_KW_MUT || lexer_peek(p->lx).kind == TOK_KW_OWN) {
+            bool owned = lexer_match(p->lx, TOK_KW_OWN);
+            bool mut = false;
+            if (!owned) mut = lexer_match(p->lx, TOK_KW_MUT);
+            if (!owned && !mut) expect(p, TOK_KW_LET);
+            else if (owned) expect(p, TOK_KW_LET);
             Token name = lexer_peek(p->lx);
             expect(p, TOK_IDENT);
-            ForgeType ty = forge_type_int();
+            ForgeType ty = owned ? forge_type_string() : forge_type_int();
             if (lexer_match(p->lx, TOK_COLON)) ty = parse_type(p);
             Expr *init_expr = NULL;
             if (lexer_match(p->lx, TOK_EQ)) init_expr = parse_expr(p);
-            init = stmt_let(mut, token_str(name), ty, init_expr);
+            init = stmt_let(mut, owned, token_str(name), ty, init_expr);
         } else if (lexer_peek(p->lx).kind == TOK_IDENT) {
             Token name = lexer_peek(p->lx);
             lexer_next(p->lx);
@@ -332,17 +349,23 @@ static Stmt *parse_stmt(Parser *p) {
         Token tag_tok = lexer_peek(p->lx);
         expect(p, TOK_IDENT);
         expect(p, TOK_COMMA);
+        bool move_val = lexer_match(p->lx, TOK_KW_MOVE);
         Expr *value = parse_expr(p);
         expect(p, TOK_SEMI);
         int tag = 0;
         for (size_t i = 0; i < tag_tok.lexeme.len; i++) {
             tag = tag * 31 + (unsigned char)tag_tok.lexeme.data[i];
         }
-        return stmt_send(target, tag, value);
+        return stmt_send(target, tag, value, move_val);
     }
     if (lexer_match(p->lx, TOK_KW_YIELD)) {
         expect(p, TOK_SEMI);
         return stmt_yield();
+    }
+    if (lexer_match(p->lx, TOK_KW_AWAIT)) {
+        Expr *e = parse_expr(p);
+        expect(p, TOK_SEMI);
+        return stmt_await(e);
     }
     if (lexer_peek(p->lx).kind == TOK_LBRACE) {
         Block *b = parse_block(p);

@@ -29,7 +29,8 @@ typedef enum {
     EXPR_QUAL_CALL,
     EXPR_RECV,
     EXPR_INDEX,
-    EXPR_FIELD
+    EXPR_FIELD,
+    EXPR_MOVE
 } ExprKind;
 
 typedef enum {
@@ -76,6 +77,7 @@ struct Expr {
             Expr *base;
             ForgeStr field;
         } field;
+        Expr *move_expr;
     } as;
 };
 
@@ -93,11 +95,13 @@ struct Stmt {
         STMT_ASSIGN,
         STMT_BREAK,
         STMT_CONTINUE,
-        STMT_BLOCK
+        STMT_BLOCK,
+        STMT_AWAIT
     } kind;
     union {
         struct {
             bool mutable_;
+            bool owned_;
             ForgeStr name;
             ForgeType type;
             Expr *init;
@@ -128,11 +132,13 @@ struct Stmt {
             Expr *target;
             int tag;
             Expr *value;
+            bool move_;
         } send;
         struct {
             ForgeStr name;
             Expr *value;
         } assign;
+        Expr *await_expr;
         Block *block;
     } as;
     Stmt *next;
@@ -254,18 +260,20 @@ Expr *expr_qual_call(ForgeStr module, ForgeStr name, Expr **args, size_t n);
 Expr *expr_index(Expr *base, Expr *index);
 Expr *expr_field(Expr *base, ForgeStr field);
 Expr *expr_recv(void);
+Expr *expr_move(Expr *inner);
 
 Block block_new(void);
 void block_append(Block *b, Stmt *s);
-Stmt *stmt_let(bool mut, ForgeStr name, ForgeType ty, Expr *init);
+Stmt *stmt_let(bool mut, bool owned, ForgeStr name, ForgeType ty, Expr *init);
 Stmt *stmt_expr(Expr *e);
 Stmt *stmt_return(Expr *e);
 Stmt *stmt_if(Expr *cond, Block *then_br, Block *else_br);
 Stmt *stmt_while(Expr *cond, Block *body);
 Stmt *stmt_for(Stmt *init, Expr *cond, Stmt *step, Block *body);
 Stmt *stmt_spawn(ForgeStr name, Expr **args, size_t n);
-Stmt *stmt_send(Expr *target, int tag, Expr *value);
+Stmt *stmt_send(Expr *target, int tag, Expr *value, bool move_);
 Stmt *stmt_yield(void);
+Stmt *stmt_await(Expr *e);
 Stmt *stmt_assign(ForgeStr name, Expr *value);
 Stmt *stmt_break(void);
 Stmt *stmt_continue(void);

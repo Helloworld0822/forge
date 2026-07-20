@@ -29,7 +29,8 @@ typedef enum {
     TOK_KW_RESTART,
     TOK_KW_IMPORT,
     TOK_KW_LIBRARY,
-    TOK_KW_EXPORT
+    TOK_KW_EXPORT,
+    TOK_KW_OWN, TOK_KW_MOVE, TOK_KW_AWAIT
 } TokenKind;
 
 typedef struct {

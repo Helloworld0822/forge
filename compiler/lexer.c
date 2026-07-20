@@ -56,6 +56,7 @@ static TokenKind keyword_kind(ForgeStr s) {
         {"import", TOK_KW_IMPORT},
         {"library", TOK_KW_LIBRARY},
         {"export", TOK_KW_EXPORT},
+        {"own", TOK_KW_OWN}, {"move", TOK_KW_MOVE}, {"await", TOK_KW_AWAIT},
     };
     for (size_t i = 0; i < sizeof(kws) / sizeof(kws[0]); i++) {
         ForgeStr kw = forge_str(kws[i].kw);

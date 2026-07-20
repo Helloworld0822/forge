@@ -16,7 +16,28 @@ typedef struct {
     int loop_depth;
     FnDecl **fn_table;
     size_t fn_table_count;
+    ForgeStr *moved_locals;
+    size_t moved_count;
+    size_t moved_cap;
 } Codegen;
+
+static void cg_mark_moved(Codegen *cg, ForgeStr name) {
+    for (size_t i = 0; i < cg->moved_count; i++) {
+        if (forge_str_eq(cg->moved_locals[i], name)) return;
+    }
+    if (cg->moved_count == cg->moved_cap) {
+        cg->moved_cap = cg->moved_cap ? cg->moved_cap * 2 : 8;
+        cg->moved_locals = (ForgeStr *)realloc(cg->moved_locals, cg->moved_cap * sizeof(ForgeStr));
+    }
+    cg->moved_locals[cg->moved_count++] = name;
+}
+
+static int cg_is_moved(Codegen *cg, ForgeStr name) {
+    for (size_t i = 0; i < cg->moved_count; i++) {
+        if (forge_str_eq(cg->moved_locals[i], name)) return 1;
+    }
+    return 0;
+}
 
 static FnDecl *cg_lookup_fn(Codegen *cg, ForgeStr name) {
     for (size_t i = 0; i < cg->fn_table_count; i++) {
@@ -169,8 +190,24 @@ static void emit_expr(Codegen *cg, Expr *e) {
         break;
     }
     case EXPR_IDENT:
+        if (cg_is_moved(cg, e->as.ident)) {
+            fprintf(stderr, "forge: use of moved value '%.*s'\n",
+                    (int)e->as.ident.len, e->as.ident.data);
+            exit(1);
+        }
         if (cg->state_prefix) fputs(cg->state_prefix, cg->out);
         fprintf(cg->out, "%.*s", (int)e->as.ident.len, e->as.ident.data);
+        break;
+    case EXPR_MOVE:
+        if (e->as.move_expr && e->as.move_expr->kind == EXPR_IDENT) {
+            ForgeStr name = e->as.move_expr->as.ident;
+            cg_mark_moved(cg, name);
+            fputs("fr_own_take(&", cg->out);
+            if (cg->state_prefix) fputs(cg->state_prefix, cg->out);
+            fprintf(cg->out, "%.*s)", (int)name.len, name.data);
+        } else {
+            emit_expr(cg, e->as.move_expr);
+        }
         break;
     case EXPR_BINARY: {
         const char *op = "?";
@@ -269,6 +306,40 @@ static void emit_expr(Codegen *cg, Expr *e) {
     }
 }
 
+static int stmt_has_suspend(Stmt *s) {
+    if (!s) return 0;
+    if (s->kind == STMT_YIELD || s->kind == STMT_AWAIT) return 1;
+    if (s->kind == STMT_IF) {
+        return stmt_has_suspend(s->as.if_stmt.then_br->first) ||
+               (s->as.if_stmt.else_br && stmt_has_suspend(s->as.if_stmt.else_br->first));
+    }
+    if (s->kind == STMT_WHILE) return stmt_has_suspend(s->as.while_stmt.body->first);
+    if (s->kind == STMT_BLOCK) return stmt_has_suspend(s->as.block->first);
+    return 0;
+}
+
+static int coro_body_has_suspend(CoroDecl *coro) {
+    for (Stmt *s = coro->body.first; s; s = s->next) {
+        if (stmt_has_suspend(s)) return 1;
+    }
+    return 0;
+}
+
+static void emit_coro_spawn_inits(Codegen *cg, CoroDecl *coro) {
+    for (Stmt *s = coro->body.first; s; s = s->next) {
+        if (stmt_has_suspend(s)) break;
+        if (s->kind == STMT_LET && s->as.let.init) {
+            cg_indent(cg);
+            fprintf(cg->out, "init->%.*s = ", (int)s->as.let.name.len, s->as.let.name.data);
+            const char *saved = cg->state_prefix;
+            cg->state_prefix = "init->";
+            emit_expr(cg, s->as.let.init);
+            cg->state_prefix = saved;
+            fputs(";\n", cg->out);
+        }
+    }
+}
+
 static CoroDecl *find_coro(ProcessDecl *proc, ForgeStr name) {
     for (size_t i = 0; i < proc->coro_count; i++) {
         if (forge_str_eq(proc->coros[i].name, name)) return &proc->coros[i];
@@ -297,6 +368,7 @@ static int count_yield_points(Stmt *s) {
     while (s) {
         switch (s->kind) {
         case STMT_YIELD: n++; break;
+        case STMT_AWAIT: n++; break;
         case STMT_IF:
             n += count_yield_points(s->as.if_stmt.then_br->first);
             if (s->as.if_stmt.else_br) n += count_yield_points(s->as.if_stmt.else_br->first);
@@ -323,22 +395,31 @@ static void emit_coro_body(Codegen *cg, CoroDecl *coro, const char *state_var) {
             continue;
         }
 
-        if (s->kind == STMT_LET) {
-            if (step == 0 && s == coro->body.first) {
-                /* locals declared in struct */
-            } else {
-                cg_line(cg, "%s %.*s = ", c_type(s->as.let.type),
-                        (int)s->as.let.name.len, s->as.let.name.data);
-                if (s->as.let.init) emit_expr(cg, s->as.let.init);
-                else fputs("0", cg->out);
-                fputc(';', cg->out);
-                fputc('\n', cg->out);
-            }
+        if (s->kind == STMT_AWAIT) {
+            cg_line(cg, "case %d:", step++);
+            cg_line(cg, "    fr_coro_set_step(__coro, %d);", step);
+            cg_indent(cg);
+            fputs("if (!fr_await_fd(__coro, ", cg->out);
+            emit_expr(cg, s->as.await_expr);
+            fputs(", FR_EVENT_READ)) return fr_yield(__coro);\n", cg->out);
+            cg_line(cg, "case %d:", step++);
             s = s->next;
             continue;
         }
 
-        if (count_yield_points(s) > 0 || s->kind == STMT_IF || s->kind == STMT_WHILE || s->kind == STMT_BLOCK) {
+        if (s->kind == STMT_LET) {
+            cg_indent(cg);
+            if (cg->state_prefix) fputs(cg->state_prefix, cg->out);
+            fprintf(cg->out, "%.*s = ", (int)s->as.let.name.len, s->as.let.name.data);
+            if (s->as.let.init) emit_expr(cg, s->as.let.init);
+            else fputs("0", cg->out);
+            fputs(";\n", cg->out);
+            s = s->next;
+            continue;
+        }
+
+        if (count_yield_points(s) > 0 || s->kind == STMT_IF || s->kind == STMT_WHILE ||
+            s->kind == STMT_BLOCK || s->kind == STMT_AWAIT) {
             cg_line(cg, "case %d:", step++);
         }
 
@@ -393,11 +474,19 @@ static void emit_coro_body(Codegen *cg, CoroDecl *coro, const char *state_var) {
             break;
         case STMT_SEND:
             cg_indent(cg);
-            fputs("fr_send(", cg->out);
-            emit_expr(cg, s->as.send.target);
-            fprintf(cg->out, ", %d, ", s->as.send.tag);
-            emit_expr(cg, s->as.send.value);
-            fputs(", NULL, 0);\n", cg->out);
+            if (s->as.send.move_) {
+                fputs("fr_send_move(", cg->out);
+                emit_expr(cg, s->as.send.target);
+                fprintf(cg->out, ", %d, ", s->as.send.tag);
+                emit_expr(cg, s->as.send.value);
+                fputs(");\n", cg->out);
+            } else {
+                fputs("fr_send(", cg->out);
+                emit_expr(cg, s->as.send.target);
+                fprintf(cg->out, ", %d, ", s->as.send.tag);
+                emit_expr(cg, s->as.send.value);
+                fputs(", NULL, 0);\n", cg->out);
+            }
             break;
         case STMT_ASSIGN:
             cg_indent(cg);
@@ -458,17 +547,7 @@ static void emit_coro_fn(Codegen *cg, ProcessDecl *proc, CoroDecl *coro) {
         fprintf(cg->out, "    init->%.*s = %.*s;\n", (int)p->name.len, p->name.data,
                 (int)p->name.len, p->name.data);
     }
-    for (Stmt *s = coro->body.first; s; s = s->next) {
-        if (s->kind == STMT_LET && s->as.let.init) {
-            cg_indent(cg);
-            fprintf(cg->out, "init->%.*s = ", (int)s->as.let.name.len, s->as.let.name.data);
-            const char *saved = cg->state_prefix;
-            cg->state_prefix = "init->";
-            emit_expr(cg, s->as.let.init);
-            cg->state_prefix = saved;
-            fputs(";\n", cg->out);
-        }
-    }
+    emit_coro_spawn_inits(cg, coro);
     fprintf(cg->out, "    fr_coro_spawn(proc, %.*s_fn, init, sizeof(%.*s_state_t));\n",
             (int)coro->name.len, coro->name.data,
             (int)coro->name.len, coro->name.data);
@@ -568,14 +647,30 @@ static void emit_stmts(Codegen *cg, Stmt *s, const char *proc_var, bool in_coro,
             break;
         case STMT_SEND:
             cg_indent(cg);
-            fputs("fr_send(", cg->out);
-            emit_expr(cg, s->as.send.target);
-            fprintf(cg->out, ", %d, ", s->as.send.tag);
-            emit_expr(cg, s->as.send.value);
-            fputs(", NULL, 0);\n", cg->out);
+            if (s->as.send.move_) {
+                fputs("fr_send_move(", cg->out);
+                emit_expr(cg, s->as.send.target);
+                fprintf(cg->out, ", %d, ", s->as.send.tag);
+                emit_expr(cg, s->as.send.value);
+                fputs(");\n", cg->out);
+            } else {
+                fputs("fr_send(", cg->out);
+                emit_expr(cg, s->as.send.target);
+                fprintf(cg->out, ", %d, ", s->as.send.tag);
+                emit_expr(cg, s->as.send.value);
+                fputs(", NULL, 0);\n", cg->out);
+            }
             break;
         case STMT_YIELD:
             if (in_coro) cg_line(cg, "return fr_yield(__coro);");
+            break;
+        case STMT_AWAIT:
+            if (in_coro) {
+                cg_indent(cg);
+                fputs("if (!fr_await_fd(__coro, ", cg->out);
+                emit_expr(cg, s->as.await_expr);
+                fputs(", FR_EVENT_READ)) return fr_yield(__coro);\n", cg->out);
+            }
             break;
         case STMT_ASSIGN:
             cg_indent(cg);
@@ -670,6 +765,11 @@ void codegen_emit_library(Program *prog, FILE *out_c, FILE *out_h, const char *r
         if (*p >= 'a' && *p <= 'z') *p = (char)(*p - 'a' + 'A');
     }
 
+    if (!out_h) {
+        fprintf(stderr, "forge: library mode requires header output\n");
+        exit(1);
+    }
+
     fprintf(out_h, "#ifndef %s\n#define %s\n\n", guard, guard);
     fprintf(out_h, "#include <stdint.h>\n\n");
     for (size_t i = 0; i < lib->fn_count; i++) {
@@ -679,6 +779,8 @@ void codegen_emit_library(Program *prog, FILE *out_c, FILE *out_h, const char *r
         fputs(";\n", out_h);
     }
     fprintf(out_h, "\n#endif\n");
+
+    if (!out_c) return;
 
     fprintf(out_c, "// Generated by Forge compiler (library mode)\n");
     fprintf(out_c, "#include \"%.*s.h\"\n", (int)lib->name.len, lib->name.data);
@@ -706,6 +808,7 @@ void codegen_emit_library(Program *prog, FILE *out_c, FILE *out_h, const char *r
         cg.indent = 0;
         fputs("}\n\n", out_c);
     }
+    free(cg.moved_locals);
     free(cg.locals);
     free(cg.fn_table);
 }
@@ -714,10 +817,12 @@ void codegen_emit(Program *prog, FILE *out, const char *runtime_include) {
     Codegen cg = { out, 0, prog, NULL, NULL, 0, 0, prog->imports, prog->import_count, 0, NULL, 0 };
     cg_build_fn_table(&cg);
 
-    fputs("// Generated by Forge compiler (AOT -> C)\n", out);
+    fputs("// Generated by Forge compiler (native backend)\n", out);
     fprintf(out, "#include \"%s\"\n", runtime_include);
     fputs("#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n", out);
     fputs("#include \"forge/os.h\"\n", out);
+    fputs("#include \"forge/ownership.h\"\n", out);
+    fputs("#include \"forge/event.h\"\n", out);
     emit_import_headers(prog, out);
     fputs("\n", out);
 
@@ -811,7 +916,7 @@ void codegen_emit(Program *prog, FILE *out, const char *runtime_include) {
     fputs("int main(int argc, char **argv) {\n", out);
   cg.indent = 1;
     cg_line(&cg, "fr_os_set_args(argc, argv);");
-    cg_line(&cg, "fr_scheduler_t *sched = fr_scheduler_create(1);");
+    cg_line(&cg, "fr_scheduler_t *sched = fr_scheduler_create(0);");
 
     for (size_t i = 0; i < prog->process_count; i++) {
         ProcessDecl *pd = &prog->processes[i];
@@ -852,6 +957,7 @@ void codegen_emit(Program *prog, FILE *out, const char *runtime_include) {
     cg_line(&cg, "return 0;");
     cg.indent = 0;
     fputs("}\n", out);
+    free(cg.moved_locals);
     free(cg.locals);
     free(cg.fn_table);
 }
