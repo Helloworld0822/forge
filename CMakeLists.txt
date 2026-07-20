@@ -50,10 +50,10 @@ file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
 
 include(${CMAKE_SOURCE_DIR}/cmake/ForgeLibrary.cmake)
 
-forge_add_library(greeting "${CMAKE_SOURCE_DIR}/libs/greeting/greeting.hy")
-forge_add_library(mathutil "${CMAKE_SOURCE_DIR}/libs/mathutil/mathutil.hy")
+forge_add_library(greeting "${CMAKE_SOURCE_DIR}/libs/greeting/greeting.fg")
+forge_add_library(mathutil "${CMAKE_SOURCE_DIR}/libs/mathutil/mathutil.fg")
 
-file(GLOB FORGE_EXAMPLES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/examples/*.hy")
+file(GLOB FORGE_EXAMPLES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/examples/*.fg")
 
 set(FORGE_EXAMPLE_TARGETS "")
 foreach(example_file IN LISTS FORGE_EXAMPLES)
@@ -67,7 +67,7 @@ foreach(example_file IN LISTS FORGE_EXAMPLES)
         OUTPUT "${generated_c}"
         COMMAND forge "${example_file}" -o "${generated_c}"
         DEPENDS forge "${example_file}"
-        COMMENT "Compiling ${example_name}.hy"
+        COMMENT "Compiling ${example_name}.fg"
         VERBATIM
     )
 
@@ -79,9 +79,9 @@ endforeach()
 set(gen_use_lib "${CMAKE_BINARY_DIR}/generated/use_library.c")
 add_custom_command(
     OUTPUT "${gen_use_lib}"
-    COMMAND forge "${CMAKE_SOURCE_DIR}/examples/use_library.hy" -o "${gen_use_lib}"
-    DEPENDS forge greeting mathutil "${CMAKE_SOURCE_DIR}/examples/use_library.hy"
-    COMMENT "Compiling use_library.hy"
+    COMMAND forge "${CMAKE_SOURCE_DIR}/examples/use_library.fg" -o "${gen_use_lib}"
+    DEPENDS forge greeting mathutil "${CMAKE_SOURCE_DIR}/examples/use_library.fg"
+    COMMENT "Compiling use_library.fg"
     VERBATIM
 )
 add_executable(use_library "${gen_use_lib}")

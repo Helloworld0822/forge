@@ -25,7 +25,7 @@ function(forge_add_executable NAME SOURCE)
         OUTPUT "${gen_c}"
         COMMAND forge "${SOURCE}" -o "${gen_c}"
         DEPENDS forge "${SOURCE}"
-        COMMENT "Compiling ${NAME}.hy"
+        COMMENT "Compiling ${NAME}.fg"
         VERBATIM
     )
 

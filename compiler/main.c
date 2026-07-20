@@ -27,8 +27,8 @@ static char *read_file(const char *path, size_t *out_len) {
 static void usage(const char *prog) {
     fprintf(stderr, "Forge %s - Hybrid Process + Coroutine language (AOT -> C)\n", FORGE_VERSION);
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  %s <input.hy> [-o output.c] [-I include-dir]\n", prog);
-    fprintf(stderr, "  %s --lib <input.hy> -o output.c --header output.h\n", prog);
+    fprintf(stderr, "  %s <input.fg> [-o output.c] [-I include-dir]\n", prog);
+    fprintf(stderr, "  %s --lib <input.fg> -o output.c --header output.h\n", prog);
 }
 
 int main(int argc, char **argv) {
