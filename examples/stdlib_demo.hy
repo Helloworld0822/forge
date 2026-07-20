@@ -1,0 +1,25 @@
+import io;
+import strings;
+import math;
+import time;
+import json;
+import fs;
+
+process main {
+    let greeting: string = str_concat("Hello, ", "Hylo!");
+    println(greeting);
+    println("len:", str_len(greeting));
+    println("pow:", pow_i(2, 10));
+    println("clamp:", clamp_i(150, 0, 100));
+
+    let now: int = time_now_ms();
+    println("time:", now);
+
+    let payload: string = json_stringify_str("lang", "hylo");
+    println(payload);
+    println("json lang:", json_get_string(payload, "lang"));
+
+    fs_write("/tmp/hylo_demo.txt", "hylo stdlib");
+    let content: string = fs_read("/tmp/hylo_demo.txt");
+    println("fs:", content);
+}
