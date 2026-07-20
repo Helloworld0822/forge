@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# Benchmark Forge vs Python HTTP servers
+# Benchmark Forge vs Python vs Phoenix vs Rust Axum HTTP servers
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FORGE_BIN="${ROOT}/build/bin/bench_server"
 PY_SERVER="${ROOT}/benchmark/python/server.py"
+PHX_SERVER="${ROOT}/benchmark/phoenix/run_server.sh"
+AXUM_SERVER="${ROOT}/benchmark/axum/run_server.sh"
 FORGE_PORT=19080
 PY_PORT=19081
+PHX_PORT=19082
+AXUM_PORT=19083
 REQUESTS=1000000
 CONCURRENCY=1000
 RESULTS="${ROOT}/benchmark/results.txt"
@@ -82,8 +86,15 @@ bench_one() {
     echo "=== $name (port $port) ==="
     "${cmd[@]}" &
     local pid=$!
-    sleep 3
-    if ! curl -sf "http://127.0.0.1:${port}/" >/dev/null; then
+    local ready=0
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if curl -sf "http://127.0.0.1:${port}/" >/dev/null; then
+            ready=1
+            break
+        fi
+        sleep 1
+    done
+    if [[ "$ready" -ne 1 ]]; then
         echo "Server failed to start" >&2
         kill "$pid" 2>/dev/null || true
         wait "$pid" 2>/dev/null || true
@@ -96,7 +107,7 @@ bench_one() {
 }
 
 {
-    echo "Forge vs Python HTTP Benchmark"
+    echo "Forge vs Python vs Phoenix vs Rust Axum HTTP Benchmark"
     echo "Date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
     echo "Host: $(uname -srm)"
     echo "Requests: $REQUESTS, Concurrency: $CONCURRENCY"
@@ -108,8 +119,18 @@ bench_one() {
         exit 1
     fi
 
+    if [[ ! -x "$PHX_SERVER" ]]; then
+        chmod +x "$PHX_SERVER"
+    fi
+
+    if [[ ! -x "$AXUM_SERVER" ]]; then
+        chmod +x "$AXUM_SERVER"
+    fi
+
     bench_one "Forge (AOT native)" "$FORGE_PORT" "$FORGE_BIN"
     bench_one "Python 3 (socket)" "$PY_PORT" python3 "$PY_SERVER"
+    bench_one "Phoenix (Bandit)" "$PHX_PORT" env PORT="$PHX_PORT" "$PHX_SERVER"
+    bench_one "Rust (Axum)" "$AXUM_PORT" env PORT="$AXUM_PORT" "$AXUM_SERVER"
 } | tee "$RESULTS"
 
 echo "Results saved to $RESULTS"
