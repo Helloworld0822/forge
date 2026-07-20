@@ -90,6 +90,7 @@ cmake --build build
 ./build/bin/coroutines
 ./build/bin/stdlib_demo
 ./build/bin/use_library
+./build/bin/use_module
 ./build/bin/http_server   # single-request demo
 ./build/bin/web_server    # curl http://127.0.0.1:8080
 ./build/bin/ownership     # own let + move demo
@@ -97,6 +98,8 @@ cmake --build build
 ./build/bin/pipe          # pipe operator demo
 ./build/bin/match         # pattern matching + const demo
 ```
+
+Step-by-step tutorials for every example live in [docs/examples/](docs/examples/README.md).
 
 ### Simple Web Servers
 
