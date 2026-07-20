@@ -1,6 +1,7 @@
 #ifndef HYLO_RUNTIME_H
 #define HYLO_RUNTIME_H
 
+#include "hylo/io.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -56,9 +57,5 @@ int hy_recv(hy_process_t *self, hy_msg_t *out);
 
 hy_process_t *hy_supervisor_create(const char *name, hy_restart_policy_t policy);
 void hy_supervisor_add_child(hy_process_t *supervisor, hy_process_t *child);
-
-void hy_print_int(int64_t value);
-void hy_print_str(const char *value);
-void hy_println(void);
 
 #endif
