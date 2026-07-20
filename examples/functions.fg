@@ -1,0 +1,27 @@
+import strings;
+
+fn add(a: int, b: int): int {
+    return a + b;
+}
+
+fn greet(name: string): string {
+    return str_concat("Hello, ", name);
+}
+
+fn factorial(n: int): int {
+    if (n <= 1) {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+process main {
+    let x: int = add(10, 32);
+    println(x);
+
+    let msg: string = greet("Forge");
+    println(msg);
+
+    let f: int = factorial(6);
+    println(f);
+}

@@ -43,6 +43,7 @@ add_executable(forge
     compiler/ast.c
     compiler/codegen.c
     compiler/mod_registry.c
+    compiler/optimize.c
 )
 target_include_directories(forge PRIVATE include compiler)
 
