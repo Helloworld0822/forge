@@ -26,6 +26,7 @@ int fr_thread_start(fr_thread_t **out, fr_thread_fn fn, void *arg);
 void fr_thread_detach(fr_thread_t *t);
 int fr_thread_join(fr_thread_t *t);
 void fr_thread_yield(void);
+void fr_thread_pin_cpu(int cpu);
 
 #ifdef __cplusplus
 }

@@ -92,6 +92,10 @@ void fr_thread_yield(void) {
     SwitchToThread();
 }
 
+void fr_thread_pin_cpu(int cpu) {
+    (void)cpu;
+}
+
 #else
 #include <pthread.h>
 #include <sched.h>
@@ -174,6 +178,17 @@ int fr_thread_join(fr_thread_t *t) {
 
 void fr_thread_yield(void) {
     sched_yield();
+}
+
+void fr_thread_pin_cpu(int cpu) {
+#if defined(FORGE_OS_LINUX)
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    CPU_SET((unsigned)(cpu < 0 ? 0 : cpu), &set);
+    pthread_setaffinity_np(pthread_self(), sizeof(set), &set);
+#else
+    (void)cpu;
+#endif
 }
 
 #endif
