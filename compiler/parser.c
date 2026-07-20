@@ -1,0 +1,439 @@
+#include "parser.h"
+
+typedef struct {
+    Lexer *lx;
+} Parser;
+
+static void parser_error(Parser *p, const char *msg) {
+    Token t = lexer_peek(p->lx);
+    fprintf(stderr, "hylo: parse error at %d:%d: %s\n", t.line, t.col, msg);
+    exit(1);
+}
+
+static void expect(Parser *p, TokenKind kind) {
+    if (!lexer_match(p->lx, kind)) {
+        parser_error(p, "unexpected token");
+    }
+}
+
+static HyloStr token_str(Token t) {
+    return t.lexeme;
+}
+
+static HyloType parse_type(Parser *p) {
+    Token t = lexer_peek(p->lx);
+    switch (t.kind) {
+    case TOK_KW_INT: lexer_next(p->lx); return hylo_type_int();
+    case TOK_KW_FLOAT: lexer_next(p->lx); return hylo_type_float();
+    case TOK_KW_BOOL: lexer_next(p->lx); return hylo_type_bool();
+    case TOK_KW_STRING: lexer_next(p->lx); return hylo_type_string();
+    case TOK_KW_VOID: lexer_next(p->lx); return hylo_type_void();
+    default:
+        parser_error(p, "expected type");
+        return hylo_type_void();
+    }
+}
+
+static Expr *parse_primary(Parser *p);
+static Expr *parse_unary(Parser *p);
+static Expr *parse_mul(Parser *p);
+static Expr *parse_add(Parser *p);
+static Expr *parse_cmp(Parser *p);
+static Expr *parse_and(Parser *p);
+static Expr *parse_or(Parser *p);
+static Expr *parse_expr(Parser *p);
+static Block *parse_block(Parser *p);
+static Stmt *parse_stmt(Parser *p);
+
+static Expr *parse_primary(Parser *p) {
+    Token t = lexer_peek(p->lx);
+    switch (t.kind) {
+    case TOK_INT:
+        lexer_next(p->lx);
+        return expr_int(t.int_val);
+    case TOK_FLOAT:
+        lexer_next(p->lx);
+        return expr_float(t.float_val);
+    case TOK_KW_TRUE:
+        lexer_next(p->lx);
+        return expr_bool(true);
+    case TOK_KW_FALSE:
+        lexer_next(p->lx);
+        return expr_bool(false);
+    case TOK_STRING:
+        lexer_next(p->lx);
+        return expr_string(token_str(t));
+    case TOK_IDENT: {
+        HyloStr name = token_str(t);
+        lexer_next(p->lx);
+        if (lexer_match(p->lx, TOK_LPAREN)) {
+            Expr **args = NULL;
+            size_t n = 0, cap = 0;
+            if (!lexer_match(p->lx, TOK_RPAREN)) {
+                do {
+                    if (n == cap) {
+                        cap = cap ? cap * 2 : 4;
+                        args = (Expr **)realloc(args, cap * sizeof(Expr *));
+                    }
+                    args[n++] = parse_expr(p);
+                } while (lexer_match(p->lx, TOK_COMMA));
+                expect(p, TOK_RPAREN);
+            }
+            return expr_call(name, args, n);
+        }
+        return expr_ident(name);
+    }
+    case TOK_KW_RECV:
+        lexer_next(p->lx);
+        expect(p, TOK_LPAREN);
+        expect(p, TOK_RPAREN);
+        return expr_recv();
+    case TOK_LPAREN: {
+        lexer_next(p->lx);
+        Expr *e = parse_expr(p);
+        expect(p, TOK_RPAREN);
+        return e;
+    }
+    default:
+        parser_error(p, "expected expression");
+        return expr_int(0);
+    }
+}
+
+static Expr *parse_unary(Parser *p) {
+    if (lexer_match(p->lx, TOK_MINUS)) {
+        return expr_binary(BIN_SUB, expr_int(0), parse_unary(p));
+    }
+    if (lexer_match(p->lx, TOK_BANG)) {
+        return expr_binary(BIN_EQ, parse_unary(p), expr_bool(false));
+    }
+    return parse_primary(p);
+}
+
+static Expr *parse_mul(Parser *p) {
+    Expr *left = parse_unary(p);
+    for (;;) {
+        if (lexer_match(p->lx, TOK_STAR)) left = expr_binary(BIN_MUL, left, parse_unary(p));
+        else if (lexer_match(p->lx, TOK_SLASH)) left = expr_binary(BIN_DIV, left, parse_unary(p));
+        else if (lexer_match(p->lx, TOK_PERCENT)) left = expr_binary(BIN_MOD, left, parse_unary(p));
+        else break;
+    }
+    return left;
+}
+
+static Expr *parse_add(Parser *p) {
+    Expr *left = parse_mul(p);
+    for (;;) {
+        if (lexer_match(p->lx, TOK_PLUS)) left = expr_binary(BIN_ADD, left, parse_mul(p));
+        else if (lexer_match(p->lx, TOK_MINUS)) left = expr_binary(BIN_SUB, left, parse_mul(p));
+        else break;
+    }
+    return left;
+}
+
+static Expr *parse_cmp(Parser *p) {
+    Expr *left = parse_add(p);
+    for (;;) {
+        if (lexer_match(p->lx, TOK_EQEQ)) left = expr_binary(BIN_EQ, left, parse_add(p));
+        else if (lexer_match(p->lx, TOK_NE)) left = expr_binary(BIN_NE, left, parse_add(p));
+        else if (lexer_match(p->lx, TOK_LT)) left = expr_binary(BIN_LT, left, parse_add(p));
+        else if (lexer_match(p->lx, TOK_LE)) left = expr_binary(BIN_LE, left, parse_add(p));
+        else if (lexer_match(p->lx, TOK_GT)) left = expr_binary(BIN_GT, left, parse_add(p));
+        else if (lexer_match(p->lx, TOK_GE)) left = expr_binary(BIN_GE, left, parse_add(p));
+        else break;
+    }
+    return left;
+}
+
+static Expr *parse_and(Parser *p) {
+    Expr *left = parse_cmp(p);
+    while (lexer_match(p->lx, TOK_ANDAND)) {
+        left = expr_binary(BIN_AND, left, parse_cmp(p));
+    }
+    return left;
+}
+
+static Expr *parse_or(Parser *p) {
+    Expr *left = parse_and(p);
+    while (lexer_match(p->lx, TOK_OROR)) {
+        left = expr_binary(BIN_OR, left, parse_and(p));
+    }
+    return left;
+}
+
+static Expr *parse_expr(Parser *p) {
+    return parse_or(p);
+}
+
+static Block *parse_block(Parser *p) {
+    expect(p, TOK_LBRACE);
+    Block *b = (Block *)calloc(1, sizeof(Block));
+    while (!lexer_match(p->lx, TOK_RBRACE)) {
+        block_append(b, parse_stmt(p));
+    }
+    return b;
+}
+
+static Stmt *parse_stmt(Parser *p) {
+    if (lexer_match(p->lx, TOK_KW_LET) || lexer_match(p->lx, TOK_KW_MUT)) {
+        bool mut = lexer_peek(p->lx).kind == TOK_KW_MUT;
+        if (mut) lexer_next(p->lx);
+        Token name = lexer_peek(p->lx);
+        expect(p, TOK_IDENT);
+        HyloType ty = hylo_type_int();
+        if (lexer_match(p->lx, TOK_COLON)) ty = parse_type(p);
+        Expr *init = NULL;
+        if (lexer_match(p->lx, TOK_EQ)) init = parse_expr(p);
+        expect(p, TOK_SEMI);
+        return stmt_let(mut, token_str(name), ty, init);
+    }
+    if (lexer_match(p->lx, TOK_KW_RETURN)) {
+        Expr *e = NULL;
+        if (lexer_peek(p->lx).kind != TOK_SEMI) e = parse_expr(p);
+        expect(p, TOK_SEMI);
+        return stmt_return(e);
+    }
+    if (lexer_match(p->lx, TOK_KW_IF)) {
+        expect(p, TOK_LPAREN);
+        Expr *cond = parse_expr(p);
+        expect(p, TOK_RPAREN);
+        Block *then_br = parse_block(p);
+        Block *else_br = NULL;
+        if (lexer_match(p->lx, TOK_KW_ELSE)) else_br = parse_block(p);
+        return stmt_if(cond, then_br, else_br);
+    }
+    if (lexer_match(p->lx, TOK_KW_WHILE)) {
+        expect(p, TOK_LPAREN);
+        Expr *cond = parse_expr(p);
+        expect(p, TOK_RPAREN);
+        Block *body = parse_block(p);
+        return stmt_while(cond, body);
+    }
+    if (lexer_match(p->lx, TOK_KW_SPAWN)) {
+        Token name = lexer_peek(p->lx);
+        expect(p, TOK_IDENT);
+        expect(p, TOK_LPAREN);
+        Expr **args = NULL;
+        size_t n = 0, cap = 0;
+        if (!lexer_match(p->lx, TOK_RPAREN)) {
+            do {
+                if (n == cap) {
+                    cap = cap ? cap * 2 : 4;
+                    args = (Expr **)realloc(args, cap * sizeof(Expr *));
+                }
+                args[n++] = parse_expr(p);
+            } while (lexer_match(p->lx, TOK_COMMA));
+            expect(p, TOK_RPAREN);
+        }
+        expect(p, TOK_SEMI);
+        return stmt_spawn(token_str(name), args, n);
+    }
+    if (lexer_match(p->lx, TOK_KW_SEND)) {
+        Expr *target = parse_expr(p);
+        expect(p, TOK_COMMA);
+        Token tag_tok = lexer_peek(p->lx);
+        expect(p, TOK_IDENT);
+        expect(p, TOK_COMMA);
+        Expr *value = parse_expr(p);
+        expect(p, TOK_SEMI);
+        int tag = 0;
+        for (size_t i = 0; i < tag_tok.lexeme.len; i++) {
+            tag = tag * 31 + (unsigned char)tag_tok.lexeme.data[i];
+        }
+        return stmt_send(target, tag, value);
+    }
+    if (lexer_match(p->lx, TOK_KW_YIELD)) {
+        expect(p, TOK_SEMI);
+        return stmt_yield();
+    }
+    if (lexer_peek(p->lx).kind == TOK_LBRACE) {
+        Block *b = parse_block(p);
+        return stmt_block(b);
+    }
+    if (lexer_peek(p->lx).kind == TOK_IDENT) {
+        Token name = lexer_peek(p->lx);
+        lexer_next(p->lx);
+        if (lexer_match(p->lx, TOK_EQ)) {
+            Expr *value = parse_expr(p);
+            expect(p, TOK_SEMI);
+            return stmt_assign(token_str(name), value);
+        }
+        /* rewind: ident as start of expression */
+        Expr *e = expr_ident(token_str(name));
+        if (lexer_match(p->lx, TOK_LPAREN)) {
+            Expr **args = NULL;
+            size_t n = 0, cap = 0;
+            if (!lexer_match(p->lx, TOK_RPAREN)) {
+                do {
+                    if (n == cap) {
+                        cap = cap ? cap * 2 : 4;
+                        args = (Expr **)realloc(args, cap * sizeof(Expr *));
+                    }
+                    args[n++] = parse_expr(p);
+                } while (lexer_match(p->lx, TOK_COMMA));
+                expect(p, TOK_RPAREN);
+            }
+            e = expr_call(token_str(name), args, n);
+        } else {
+            while (lexer_peek(p->lx).kind == TOK_PLUS || lexer_peek(p->lx).kind == TOK_MINUS ||
+                   lexer_peek(p->lx).kind == TOK_STAR || lexer_peek(p->lx).kind == TOK_SLASH) {
+                Token op = lexer_next(p->lx);
+                BinOp bop = BIN_ADD;
+                if (op.kind == TOK_MINUS) bop = BIN_SUB;
+                else if (op.kind == TOK_STAR) bop = BIN_MUL;
+                else if (op.kind == TOK_SLASH) bop = BIN_DIV;
+                e = expr_binary(bop, e, parse_unary(p));
+            }
+        }
+        expect(p, TOK_SEMI);
+        return stmt_expr(e);
+    }
+    Expr *e = parse_expr(p);
+    expect(p, TOK_SEMI);
+    return stmt_expr(e);
+}
+
+static Param *parse_params(Parser *p) {
+    Param *head = NULL, *tail = NULL;
+    if (lexer_match(p->lx, TOK_RPAREN)) return NULL;
+    do {
+        Token name = lexer_peek(p->lx);
+        expect(p, TOK_IDENT);
+        expect(p, TOK_COLON);
+        HyloType ty = parse_type(p);
+        Param *param = (Param *)calloc(1, sizeof(Param));
+        param->name = token_str(name);
+        param->type = ty;
+        if (!head) head = tail = param;
+        else { tail->next = param; tail = param; }
+    } while (lexer_match(p->lx, TOK_COMMA));
+    expect(p, TOK_RPAREN);
+    return head;
+}
+
+static FnDecl parse_fn(Parser *p) {
+    expect(p, TOK_KW_FN);
+    Token name = lexer_peek(p->lx);
+    expect(p, TOK_IDENT);
+    expect(p, TOK_LPAREN);
+    Param *params = parse_params(p);
+    HyloType ret = hylo_type_void();
+    if (lexer_match(p->lx, TOK_COLON)) ret = parse_type(p);
+    Block *body = parse_block(p);
+    FnDecl fn = { token_str(name), params, ret, *body };
+    free(body);
+    return fn;
+}
+
+static CoroDecl parse_coroutine(Parser *p) {
+    expect(p, TOK_KW_COROUTINE);
+    Token name = lexer_peek(p->lx);
+    expect(p, TOK_IDENT);
+    expect(p, TOK_LPAREN);
+    Param *params = parse_params(p);
+    Block *body = parse_block(p);
+    CoroDecl coro = { token_str(name), params, *body };
+    free(body);
+    (void)params;
+    return coro;
+}
+
+static ProcessDecl parse_process(Parser *p) {
+    expect(p, TOK_KW_PROCESS);
+    Token name = lexer_peek(p->lx);
+    expect(p, TOK_IDENT);
+    expect(p, TOK_LBRACE);
+
+    ProcessDecl proc = {0};
+    proc.name = token_str(name);
+    proc.body = block_new();
+
+    CoroDecl *coros = NULL;
+    size_t coro_count = 0, coro_cap = 0;
+
+    while (lexer_peek(p->lx).kind != TOK_RBRACE) {
+        if (lexer_peek(p->lx).kind == TOK_KW_COROUTINE) {
+            if (coro_count == coro_cap) {
+                coro_cap = coro_cap ? coro_cap * 2 : 4;
+                coros = (CoroDecl *)realloc(coros, coro_cap * sizeof(CoroDecl));
+            }
+            coros[coro_count++] = parse_coroutine(p);
+        } else if (lexer_match(p->lx, TOK_KW_ON)) {
+            expect(p, TOK_KW_RECEIVE);
+            expect(p, TOK_LPAREN);
+            Token param = lexer_peek(p->lx);
+            expect(p, TOK_IDENT);
+            expect(p, TOK_COLON);
+            HyloType ty = parse_type(p);
+            expect(p, TOK_RPAREN);
+            proc.has_receive = true;
+            proc.receive_param.name = token_str(param);
+            proc.receive_param.type = ty;
+            proc.on_receive = parse_block(p);
+        } else {
+            block_append(&proc.body, parse_stmt(p));
+        }
+    }
+    expect(p, TOK_RBRACE);
+    proc.coros = coros;
+    proc.coro_count = coro_count;
+    return proc;
+}
+
+static SupervisorDecl parse_supervisor(Parser *p) {
+    expect(p, TOK_KW_SUPERVISOR);
+    Token name = lexer_peek(p->lx);
+    expect(p, TOK_IDENT);
+    expect(p, TOK_LBRACE);
+
+    SupervisorDecl sup = {0};
+    sup.name = token_str(name);
+    sup.policy = SUP_RESTART_PROCESS;
+
+    while (lexer_peek(p->lx).kind != TOK_RBRACE) {
+        if (lexer_match(p->lx, TOK_KW_RESTART)) {
+            expect(p, TOK_COLON);
+            Token pol = lexer_peek(p->lx);
+            expect(p, TOK_IDENT);
+            if (hylo_str_eq(token_str(pol), hylo_str("coro"))) sup.policy = SUP_RESTART_CORO;
+            else if (hylo_str_eq(token_str(pol), hylo_str("all"))) sup.policy = SUP_RESTART_ALL;
+            else sup.policy = SUP_RESTART_PROCESS;
+            expect(p, TOK_SEMI);
+        } else {
+            Token child_tok = lexer_peek(p->lx);
+            expect(p, TOK_IDENT);
+            HyloStr child = token_str(child_tok);
+            sup.child_count++;
+            sup.children = (HyloStr *)realloc(sup.children, sup.child_count * sizeof(HyloStr));
+            sup.children[sup.child_count - 1] = child;
+            expect(p, TOK_SEMI);
+        }
+    }
+    expect(p, TOK_RBRACE);
+    return sup;
+}
+
+Program parse_program(Lexer *lx) {
+    Parser p = { lx };
+    Program prog = {0};
+
+    while (lexer_peek(p.lx).kind != TOK_EOF) {
+        Token t = lexer_peek(p.lx);
+        if (t.kind == TOK_KW_PROCESS) {
+            prog.process_count++;
+            prog.processes = (ProcessDecl *)realloc(prog.processes, prog.process_count * sizeof(ProcessDecl));
+            prog.processes[prog.process_count - 1] = parse_process(&p);
+        } else if (t.kind == TOK_KW_FN) {
+            prog.fn_count++;
+            prog.functions = (FnDecl *)realloc(prog.functions, prog.fn_count * sizeof(FnDecl));
+            prog.functions[prog.fn_count - 1] = parse_fn(&p);
+        } else if (t.kind == TOK_KW_SUPERVISOR) {
+            prog.supervisor_count++;
+            prog.supervisors = (SupervisorDecl *)realloc(prog.supervisors, prog.supervisor_count * sizeof(SupervisorDecl));
+            prog.supervisors[prog.supervisor_count - 1] = parse_supervisor(&p);
+        } else {
+            parser_error(&p, "expected top-level declaration");
+        }
+    }
+    return prog;
+}
