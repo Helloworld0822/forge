@@ -28,13 +28,17 @@ add_library(forge_std STATIC
     stdlib/json.c
 )
 target_include_directories(forge_std PUBLIC include)
+target_link_libraries(forge_std PUBLIC pthread)
 
 add_library(forge_runtime STATIC
     runtime/runtime.c
     runtime/scheduler.c
+    runtime/work_queue.c
+    runtime/event_loop.c
+    runtime/ownership.c
 )
-target_link_libraries(forge_runtime PUBLIC forge_std)
-target_include_directories(forge_runtime PUBLIC include)
+target_link_libraries(forge_runtime PUBLIC forge_std pthread)
+target_include_directories(forge_runtime PUBLIC include runtime)
 
 add_executable(forge
     compiler/main.c
@@ -44,6 +48,7 @@ add_executable(forge
     compiler/codegen.c
     compiler/mod_registry.c
     compiler/optimize.c
+    compiler/driver.c
 )
 target_include_directories(forge PRIVATE include compiler)
 
@@ -65,32 +70,32 @@ foreach(example_file IN LISTS FORGE_EXAMPLES)
     if(example_name STREQUAL "web_server")
         continue()
     endif()
-    set(generated_c "${CMAKE_BINARY_DIR}/generated/${example_name}.c")
+    set(gen_bin "${CMAKE_BINARY_DIR}/bin/${example_name}")
 
     add_custom_command(
-        OUTPUT "${generated_c}"
-        COMMAND forge "${example_file}" -o "${generated_c}"
-        DEPENDS forge "${example_file}"
-        COMMENT "Compiling ${example_name}.fg"
+        OUTPUT "${gen_bin}"
+        COMMAND forge "${example_file}" -o "${gen_bin}"
+            --forge-root "${CMAKE_SOURCE_DIR}" --lib-dir "${CMAKE_BINARY_DIR}/lib"
+        DEPENDS forge forge_runtime "${example_file}"
+        COMMENT "Compiling ${example_name}.fg (native)"
         VERBATIM
     )
-
-    add_executable("${example_name}" "${generated_c}")
-    target_link_libraries("${example_name}" PRIVATE forge_runtime)
+    add_custom_target("${example_name}" DEPENDS "${gen_bin}")
     list(APPEND FORGE_EXAMPLE_TARGETS "${example_name}")
 endforeach()
 
-set(gen_use_lib "${CMAKE_BINARY_DIR}/generated/use_library.c")
+set(gen_use_lib "${CMAKE_BINARY_DIR}/bin/use_library")
 add_custom_command(
     OUTPUT "${gen_use_lib}"
     COMMAND forge "${CMAKE_SOURCE_DIR}/examples/use_library.fg" -o "${gen_use_lib}"
-    DEPENDS forge greeting mathutil "${CMAKE_SOURCE_DIR}/examples/use_library.fg"
-    COMMENT "Compiling use_library.fg"
+        --forge-root "${CMAKE_SOURCE_DIR}" --lib-dir "${CMAKE_BINARY_DIR}/lib"
+        -I "${CMAKE_BINARY_DIR}/generated/libs"
+        -l forge_greeting -l forge_mathutil
+    DEPENDS forge forge_runtime greeting mathutil "${CMAKE_SOURCE_DIR}/examples/use_library.fg"
+    COMMENT "Compiling use_library.fg (native)"
     VERBATIM
 )
-add_executable(use_library "${gen_use_lib}")
-target_link_libraries(use_library PRIVATE forge_runtime greeting mathutil)
-target_include_directories(use_library PRIVATE "${CMAKE_BINARY_DIR}/generated/libs")
+add_custom_target(use_library DEPENDS "${gen_use_lib}")
 list(APPEND FORGE_EXAMPLE_TARGETS use_library)
 
 if(FORGE_EXAMPLE_TARGETS)
@@ -99,52 +104,53 @@ endif()
 
 # Self-hosted compiler bootstrap (stage0 C forge -> stage1 -> stage2)
 set(FORGE_BOOTSTRAP_SRC "${CMAKE_SOURCE_DIR}/bootstrap/compiler.fg")
-set(FORGE_STAGE1_C "${CMAKE_BINARY_DIR}/generated/forge_stage1.c")
-set(FORGE_STAGE2_C "${CMAKE_BINARY_DIR}/generated/forge_stage2.c")
+set(FORGE_STAGE1_BIN "${CMAKE_BINARY_DIR}/bin/forge-stage1")
+set(FORGE_STAGE2_BIN "${CMAKE_BINARY_DIR}/bin/forge-stage2")
 
 add_custom_command(
-    OUTPUT "${FORGE_STAGE1_C}"
-    COMMAND forge "${FORGE_BOOTSTRAP_SRC}" -o "${FORGE_STAGE1_C}"
-    DEPENDS forge "${FORGE_BOOTSTRAP_SRC}"
-    COMMENT "Bootstrap stage1: C forge compiles compiler.fg"
+    OUTPUT "${FORGE_STAGE1_BIN}"
+    COMMAND forge "${FORGE_BOOTSTRAP_SRC}" -o "${FORGE_STAGE1_BIN}"
+        --forge-root "${CMAKE_SOURCE_DIR}" --lib-dir "${CMAKE_BINARY_DIR}/lib"
+    DEPENDS forge forge_runtime "${FORGE_BOOTSTRAP_SRC}"
+    COMMENT "Bootstrap stage1: compile compiler.fg to native binary"
     VERBATIM
 )
 
-add_executable(forge-stage1 "${FORGE_STAGE1_C}")
-target_link_libraries(forge-stage1 PRIVATE forge_runtime)
+add_custom_target(forge-stage1 DEPENDS "${FORGE_STAGE1_BIN}")
 
 add_custom_command(
-    OUTPUT "${FORGE_STAGE2_C}"
-    COMMAND forge-stage1 "${FORGE_BOOTSTRAP_SRC}" -o "${FORGE_STAGE2_C}"
+    OUTPUT "${FORGE_STAGE2_BIN}"
+    COMMAND "${FORGE_STAGE1_BIN}" "${FORGE_BOOTSTRAP_SRC}" -o "${FORGE_STAGE2_BIN}"
+        --forge-root "${CMAKE_SOURCE_DIR}" --lib-dir "${CMAKE_BINARY_DIR}/lib"
     DEPENDS forge-stage1 "${FORGE_BOOTSTRAP_SRC}"
     COMMENT "Bootstrap stage2: self-hosted forge compiles compiler.fg"
     VERBATIM
 )
 
-add_custom_target(forge-selfhost DEPENDS "${FORGE_STAGE2_C}")
+add_custom_target(forge-selfhost DEPENDS "${FORGE_STAGE2_BIN}")
 
 # Benchmark HTTP server (Forge)
 set(FORGE_BENCH_SRC "${CMAKE_SOURCE_DIR}/benchmark/forge/bench_server.fg")
-set(FORGE_BENCH_C "${CMAKE_BINARY_DIR}/generated/bench_server.c")
+set(FORGE_BENCH_BIN "${CMAKE_BINARY_DIR}/bin/bench_server")
 add_custom_command(
-    OUTPUT "${FORGE_BENCH_C}"
-    COMMAND forge "${FORGE_BENCH_SRC}" -o "${FORGE_BENCH_C}"
-    DEPENDS forge "${FORGE_BENCH_SRC}"
-    COMMENT "Compiling bench_server.fg"
+    OUTPUT "${FORGE_BENCH_BIN}"
+    COMMAND forge "${FORGE_BENCH_SRC}" -o "${FORGE_BENCH_BIN}"
+        --forge-root "${CMAKE_SOURCE_DIR}" --lib-dir "${CMAKE_BINARY_DIR}/lib"
+    DEPENDS forge forge_runtime "${FORGE_BENCH_SRC}"
+    COMMENT "Compiling bench_server.fg (native)"
     VERBATIM
 )
-add_executable(bench_server "${FORGE_BENCH_C}")
-target_link_libraries(bench_server PRIVATE forge_runtime)
+add_custom_target(bench_server DEPENDS "${FORGE_BENCH_BIN}")
 
 # Simple web server example (native main, port 8080)
 set(FORGE_WEB_SRC "${CMAKE_SOURCE_DIR}/examples/web_server.fg")
-set(FORGE_WEB_C "${CMAKE_BINARY_DIR}/generated/web_server.c")
+set(FORGE_WEB_BIN "${CMAKE_BINARY_DIR}/bin/web_server")
 add_custom_command(
-    OUTPUT "${FORGE_WEB_C}"
-    COMMAND forge "${FORGE_WEB_SRC}" -o "${FORGE_WEB_C}"
-    DEPENDS forge "${FORGE_WEB_SRC}"
-    COMMENT "Compiling web_server.fg"
+    OUTPUT "${FORGE_WEB_BIN}"
+    COMMAND forge "${FORGE_WEB_SRC}" -o "${FORGE_WEB_BIN}"
+        --forge-root "${CMAKE_SOURCE_DIR}" --lib-dir "${CMAKE_BINARY_DIR}/lib"
+    DEPENDS forge forge_runtime "${FORGE_WEB_SRC}"
+    COMMENT "Compiling web_server.fg (native)"
     VERBATIM
 )
-add_executable(web_server "${FORGE_WEB_C}")
-target_link_libraries(web_server PRIVATE forge_runtime)
+add_custom_target(web_server DEPENDS "${FORGE_WEB_BIN}")
