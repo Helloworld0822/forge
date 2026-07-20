@@ -19,6 +19,8 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
+set(FORGE_CC_ARGS --cc "${CMAKE_C_COMPILER}")
+
 add_library(forge_std STATIC
     stdlib/io.c
     stdlib/string.c
@@ -89,6 +91,7 @@ foreach(example_file IN LISTS FORGE_EXAMPLES)
     add_custom_command(
         OUTPUT "${gen_bin}"
         COMMAND forge "${example_file}" -o "${gen_bin}"
+            ${FORGE_CC_ARGS}
             --forge-root "${CMAKE_SOURCE_DIR}" --lib-dir "${CMAKE_BINARY_DIR}/lib"
         DEPENDS forge forge_runtime "${example_file}"
         COMMENT "Compiling ${example_name}.fg (native)"
@@ -102,6 +105,7 @@ set(gen_use_lib "${CMAKE_BINARY_DIR}/bin/use_library")
 add_custom_command(
     OUTPUT "${gen_use_lib}"
     COMMAND forge "${CMAKE_SOURCE_DIR}/examples/use_library.fg" -o "${gen_use_lib}"
+        ${FORGE_CC_ARGS}
         --forge-root "${CMAKE_SOURCE_DIR}" --lib-dir "${CMAKE_BINARY_DIR}/lib"
         -I "${CMAKE_BINARY_DIR}/generated/libs"
         -l forge_greeting -l forge_mathutil
@@ -125,6 +129,7 @@ set(FORGE_STAGE2_BIN "${CMAKE_BINARY_DIR}/bin/forge-stage2")
 add_custom_command(
     OUTPUT "${FORGE_STAGE1_BIN}"
     COMMAND forge "${FORGE_BOOTSTRAP_SRC}" -o "${FORGE_STAGE1_BIN}"
+        ${FORGE_CC_ARGS}
         --forge-root "${CMAKE_SOURCE_DIR}" --lib-dir "${CMAKE_BINARY_DIR}/lib"
     DEPENDS forge forge_runtime "${FORGE_BOOTSTRAP_SRC}"
     COMMENT "Bootstrap stage1: C forge compiles compiler.fg"
@@ -199,6 +204,7 @@ set(FORGE_BENCH_BIN "${CMAKE_BINARY_DIR}/bin/bench_server")
 add_custom_command(
     OUTPUT "${FORGE_BENCH_BIN}"
     COMMAND forge "${FORGE_BENCH_SRC}" -o "${FORGE_BENCH_BIN}"
+        ${FORGE_CC_ARGS}
         --forge-root "${CMAKE_SOURCE_DIR}" --lib-dir "${CMAKE_BINARY_DIR}/lib"
     DEPENDS forge forge_runtime "${FORGE_BENCH_SRC}"
     COMMENT "Compiling bench_server.fg (native)"
@@ -212,6 +218,7 @@ set(FORGE_WEB_BIN "${CMAKE_BINARY_DIR}/bin/web_server")
 add_custom_command(
     OUTPUT "${FORGE_WEB_BIN}"
     COMMAND forge "${FORGE_WEB_SRC}" -o "${FORGE_WEB_BIN}"
+        ${FORGE_CC_ARGS}
         --forge-root "${CMAKE_SOURCE_DIR}" --lib-dir "${CMAKE_BINARY_DIR}/lib"
     DEPENDS forge forge_runtime "${FORGE_WEB_SRC}"
     COMMENT "Compiling web_server.fg (native)"

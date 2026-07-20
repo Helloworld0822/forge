@@ -12,6 +12,7 @@
 #if !defined(FORGE_OS_WINDOWS)
 #include <sys/wait.h>
 #include <unistd.h>
+#define FORGE_HAVE_UNISTD 1
 #else
 #include <process.h>
 #define PATH_MAX MAX_PATH
@@ -157,9 +158,46 @@ static int link_object(const char *obj_path, const char *output_path, const Forg
     return rc;
 }
 
+#if defined(FORGE_HAVE_UNISTD)
+static bool command_in_path(const char *cmd) {
+    const char *path = getenv("PATH");
+    if (!path || !cmd || !cmd[0]) return false;
+
+    char *path_copy = strdup(path);
+    if (!path_copy) return false;
+
+    bool found = false;
+    char *save = NULL;
+    for (char *dir = strtok_r(path_copy, ":", &save); dir; dir = strtok_r(NULL, ":", &save)) {
+        size_t len = strlen(dir) + strlen(cmd) + 2;
+        char *full = (char *)malloc(len);
+        if (!full) continue;
+        snprintf(full, len, "%s/%s", dir, cmd);
+        if (access(full, X_OK) == 0) found = true;
+        free(full);
+        if (found) break;
+    }
+    free(path_copy);
+    return found;
+}
+#endif
+
+static const char *detect_default_cc(void) {
+    const char *cc = getenv("CC");
+    if (cc && cc[0]) return cc;
+
+#if defined(FORGE_HAVE_UNISTD)
+    static const char *candidates[] = {"clang", "gcc", "cc", NULL};
+    for (size_t i = 0; candidates[i]; i++) {
+        if (command_in_path(candidates[i])) return candidates[i];
+    }
+#endif
+    return "cc";
+}
+
 void forge_driver_config_init(ForgeDriverConfig *cfg) {
     memset(cfg, 0, sizeof(*cfg));
-    cfg->cc = "clang";
+    cfg->cc = detect_default_cc();
     cfg->opt_level = 3;
 }
 

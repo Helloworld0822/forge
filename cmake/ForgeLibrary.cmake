@@ -7,6 +7,7 @@ function(forge_add_library NAME SOURCE)
     add_custom_command(
         OUTPUT "${gen_a}" "${gen_h}"
         COMMAND forge --lib "${SOURCE}" -o "${gen_a}" --header "${gen_h}"
+            ${FORGE_CC_ARGS}
             --forge-root "${CMAKE_SOURCE_DIR}" --lib-dir "${CMAKE_BINARY_DIR}/lib"
         DEPENDS forge forge_runtime "${SOURCE}"
         COMMENT "Compiling Forge library ${NAME}"
@@ -30,6 +31,7 @@ function(forge_add_executable NAME SOURCE)
     add_custom_command(
         OUTPUT "${gen_bin}"
         COMMAND forge "${SOURCE}" -o "${gen_bin}"
+            ${FORGE_CC_ARGS}
             --forge-root "${CMAKE_SOURCE_DIR}" --lib-dir "${CMAKE_BINARY_DIR}/lib"
         DEPENDS forge forge_runtime "${SOURCE}"
         COMMENT "Compiling ${NAME}.fg to native binary"

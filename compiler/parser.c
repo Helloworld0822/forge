@@ -49,6 +49,27 @@ static Expr *parse_or(Parser *p);
 static Block *parse_block(Parser *p);
 static Stmt *parse_stmt(Parser *p);
 
+static Stmt *parse_assign(Parser *p, ForgeStr name) {
+    if (lexer_match(p->lx, TOK_EQ)) {
+        return stmt_assign(name, parse_expr(p));
+    }
+    TokenKind k = lexer_peek(p->lx).kind;
+    BinOp op;
+    switch (k) {
+    case TOK_PLUSEQ: op = BIN_ADD; break;
+    case TOK_MINUSEQ: op = BIN_SUB; break;
+    case TOK_STAREQ: op = BIN_MUL; break;
+    case TOK_SLASHEQ: op = BIN_DIV; break;
+    case TOK_PERCENTEQ: op = BIN_MOD; break;
+    default:
+        parser_error(p, "expected assignment operator");
+        return NULL;
+    }
+    lexer_next(p->lx);
+    Expr *rhs = parse_expr(p);
+    return stmt_assign(name, expr_binary(op, expr_ident(name), rhs));
+}
+
 static Expr *parse_postfix(Parser *p, Expr *e) {
     for (;;) {
         if (lexer_match(p->lx, TOK_DOT)) {
@@ -369,11 +390,7 @@ static Stmt *parse_stmt(Parser *p) {
         } else if (lexer_peek(p->lx).kind == TOK_IDENT) {
             Token name = lexer_peek(p->lx);
             lexer_next(p->lx);
-            if (lexer_match(p->lx, TOK_EQ)) {
-                init = stmt_assign(token_str(name), parse_expr(p));
-            } else {
-                parser_error(p, "expected '=' in for init");
-            }
+            init = parse_assign(p, token_str(name));
         }
         expect(p, TOK_SEMI);
         Expr *cond = parse_expr(p);
@@ -382,11 +399,7 @@ static Stmt *parse_stmt(Parser *p) {
         if (lexer_peek(p->lx).kind == TOK_IDENT) {
             Token name = lexer_peek(p->lx);
             lexer_next(p->lx);
-            if (lexer_match(p->lx, TOK_EQ)) {
-                step = stmt_assign(token_str(name), parse_expr(p));
-            } else {
-                parser_error(p, "expected '=' in for step");
-            }
+            step = parse_assign(p, token_str(name));
         }
         expect(p, TOK_RPAREN);
         Block *body = parse_block(p);
@@ -442,10 +455,12 @@ static Stmt *parse_stmt(Parser *p) {
     if (lexer_peek(p->lx).kind == TOK_IDENT) {
         Token name = lexer_peek(p->lx);
         lexer_next(p->lx);
-        if (lexer_match(p->lx, TOK_EQ)) {
-            Expr *value = parse_expr(p);
+        if (lexer_peek(p->lx).kind == TOK_EQ || lexer_peek(p->lx).kind == TOK_PLUSEQ ||
+            lexer_peek(p->lx).kind == TOK_MINUSEQ || lexer_peek(p->lx).kind == TOK_STAREQ ||
+            lexer_peek(p->lx).kind == TOK_SLASHEQ || lexer_peek(p->lx).kind == TOK_PERCENTEQ) {
+            Stmt *s = parse_assign(p, token_str(name));
             expect(p, TOK_SEMI);
-            return stmt_assign(token_str(name), value);
+            return s;
         }
         /* rewind: ident as start of expression */
         Expr *e = expr_ident(token_str(name));

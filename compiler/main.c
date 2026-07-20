@@ -38,6 +38,7 @@ static void usage(const char *prog) {
     fprintf(stderr, "  --lib-dir PATH     Directory containing libforge_*.a\n");
     fprintf(stderr, "  -I PATH            Extra include directory\n");
     fprintf(stderr, "  -l NAME             Link libforge_NAME.a (repeatable)\n");
+    fprintf(stderr, "  --cc PATH          C compiler for native output (default: CC, clang, gcc, or cc)\n");
     fprintf(stderr, "  --keep-temp        Keep intermediate object files\n");
 }
 
@@ -75,6 +76,8 @@ int main(int argc, char **argv) {
             forge_driver_detect_paths(&cfg, argv[0]);
         } else if (strcmp(argv[i], "--lib-dir") == 0 && i + 1 < argc) {
             cfg.lib_dir = argv[++i];
+        } else if (strcmp(argv[i], "--cc") == 0 && i + 1 < argc) {
+            cfg.cc = argv[++i];
         } else if (strcmp(argv[i], "--keep-temp") == 0) {
             cfg.keep_intermediate = true;
         } else if (strcmp(argv[i], "-I") == 0 && i + 1 < argc) {

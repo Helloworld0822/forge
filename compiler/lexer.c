@@ -178,11 +178,36 @@ Token lexer_next(Lexer *lx) {
     case ':': return make_token(lx, TOK_COLON, forge_str(":"));
     case ';': return make_token(lx, TOK_SEMI, forge_str(";"));
     case '.': return make_token(lx, TOK_DOT, forge_str("."));
-    case '+': return make_token(lx, TOK_PLUS, forge_str("+"));
-    case '-': return make_token(lx, TOK_MINUS, forge_str("-"));
-    case '*': return make_token(lx, TOK_STAR, forge_str("*"));
-    case '/': return make_token(lx, TOK_SLASH, forge_str("/"));
-    case '%': return make_token(lx, TOK_PERCENT, forge_str("%"));
+    case '+':
+        if (lx->pos < lx->len && lx->src[lx->pos] == '=') {
+            lx->pos++; lx->col++;
+            return make_token(lx, TOK_PLUSEQ, forge_str("+="));
+        }
+        return make_token(lx, TOK_PLUS, forge_str("+"));
+    case '-':
+        if (lx->pos < lx->len && lx->src[lx->pos] == '=') {
+            lx->pos++; lx->col++;
+            return make_token(lx, TOK_MINUSEQ, forge_str("-="));
+        }
+        return make_token(lx, TOK_MINUS, forge_str("-"));
+    case '*':
+        if (lx->pos < lx->len && lx->src[lx->pos] == '=') {
+            lx->pos++; lx->col++;
+            return make_token(lx, TOK_STAREQ, forge_str("*="));
+        }
+        return make_token(lx, TOK_STAR, forge_str("*"));
+    case '/':
+        if (lx->pos < lx->len && lx->src[lx->pos] == '=') {
+            lx->pos++; lx->col++;
+            return make_token(lx, TOK_SLASHEQ, forge_str("/="));
+        }
+        return make_token(lx, TOK_SLASH, forge_str("/"));
+    case '%':
+        if (lx->pos < lx->len && lx->src[lx->pos] == '=') {
+            lx->pos++; lx->col++;
+            return make_token(lx, TOK_PERCENTEQ, forge_str("%="));
+        }
+        return make_token(lx, TOK_PERCENT, forge_str("%"));
     case '!':
         if (lx->pos < lx->len && lx->src[lx->pos] == '=') {
             lx->pos++; lx->col++;
