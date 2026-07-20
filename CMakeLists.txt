@@ -119,6 +119,7 @@ endif()
 # Self-hosted compiler bootstrap (stage0 C forge -> stage1 -> stage2)
 set(FORGE_BOOTSTRAP_SRC "${CMAKE_SOURCE_DIR}/bootstrap/compiler.fg")
 set(FORGE_STAGE1_BIN "${CMAKE_BINARY_DIR}/bin/forge-stage1")
+set(FORGE_STAGE2_C "${CMAKE_BINARY_DIR}/generated/forge-stage2.c")
 set(FORGE_STAGE2_BIN "${CMAKE_BINARY_DIR}/bin/forge-stage2")
 
 add_custom_command(
@@ -126,7 +127,7 @@ add_custom_command(
     COMMAND forge "${FORGE_BOOTSTRAP_SRC}" -o "${FORGE_STAGE1_BIN}"
         --forge-root "${CMAKE_SOURCE_DIR}" --lib-dir "${CMAKE_BINARY_DIR}/lib"
     DEPENDS forge forge_runtime "${FORGE_BOOTSTRAP_SRC}"
-    COMMENT "Bootstrap stage1: compile compiler.fg to native binary"
+    COMMENT "Bootstrap stage1: C forge compiles compiler.fg"
     VERBATIM
 )
 
@@ -134,10 +135,15 @@ add_custom_target(forge-stage1 DEPENDS "${FORGE_STAGE1_BIN}")
 
 add_custom_command(
     OUTPUT "${FORGE_STAGE2_BIN}"
-    COMMAND "${FORGE_STAGE1_BIN}" "${FORGE_BOOTSTRAP_SRC}" -o "${FORGE_STAGE2_BIN}"
-        --forge-root "${CMAKE_SOURCE_DIR}" --lib-dir "${CMAKE_BINARY_DIR}/lib"
+    COMMAND "${FORGE_STAGE1_BIN}" "${FORGE_BOOTSTRAP_SRC}" -o "${FORGE_STAGE2_C}"
+    COMMAND ${CMAKE_C_COMPILER} -std=c11 -O3
+        "-I${CMAKE_SOURCE_DIR}/include"
+        "${FORGE_STAGE2_C}"
+        -o "${FORGE_STAGE2_BIN}"
+        "-L${CMAKE_BINARY_DIR}/lib"
+        -lforge_std -lforge_runtime -lm
     DEPENDS forge-stage1 "${FORGE_BOOTSTRAP_SRC}"
-    COMMENT "Bootstrap stage2: self-hosted forge compiles compiler.fg"
+    COMMENT "Bootstrap stage2: self-hosted compiler compiles itself"
     VERBATIM
 )
 
@@ -147,9 +153,10 @@ add_custom_target(forge-selfhost DEPENDS "${FORGE_STAGE2_BIN}")
 set(FORGE_SELFHOST_TEST_C "${CMAKE_BINARY_DIR}/generated/selfhost_match.c")
 add_custom_command(
     OUTPUT "${FORGE_SELFHOST_TEST_C}"
-    COMMAND "${FORGE_STAGE1_BIN}" "${CMAKE_SOURCE_DIR}/examples/match.fg" -o "${FORGE_SELFHOST_TEST_C}"
-    DEPENDS forge-stage1 "${CMAKE_SOURCE_DIR}/examples/match.fg"
-    COMMENT "Self-host test: stage1 compiles match.fg"
+    COMMAND "${FORGE_STAGE2_BIN}" "${CMAKE_SOURCE_DIR}/examples/match.fg"
+        -o "${FORGE_SELFHOST_TEST_C}"
+    DEPENDS forge-selfhost "${CMAKE_SOURCE_DIR}/examples/match.fg"
+    COMMENT "Self-host test: stage2 compiles match.fg"
     VERBATIM
 )
 add_custom_target(forge-selfhost-test DEPENDS "${FORGE_SELFHOST_TEST_C}")

@@ -35,6 +35,28 @@ Forge source (`.fg`) is compiled directly to native binaries. The compiler strea
 
 Supported platforms: Linux, macOS, Windows 10+.
 
+- **Self-hosting bootstrap** — `bootstrap/compiler.fg` compiles Forge subset to C; stage2 recompiles itself
+
+## Self-hosting bootstrap
+
+```bash
+cmake --build build --target forge-selfhost forge-selfhost-test
+```
+
+Pipeline:
+
+| Stage | Binary | Compiles |
+|-------|--------|----------|
+| 0 | `build/bin/forge` (C) | `bootstrap/compiler.fg` → `forge-stage1` |
+| 1 | `build/bin/forge-stage1` | `compiler.fg` → `forge-stage2.c` |
+| 2 | `build/bin/forge-stage2` | self + `examples/match.fg` |
+
+Verify stage2 compiles itself:
+
+```bash
+./build/bin/forge-stage2 bootstrap/compiler.fg -o /tmp/stage3.c
+```
+
 ## Build
 
 ```bash
