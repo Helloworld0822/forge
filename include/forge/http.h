@@ -13,5 +13,10 @@ const char *fr_http_req_body(int64_t req);
 void fr_http_respond(int64_t req, int64_t status, const char *body);
 void fr_http_close(int64_t req);
 void fr_http_server_close(int64_t server);
+void fr_http_prepare(int64_t server, const char *body);
+void fr_http_serve_prepared(int64_t server);
+void fr_http_serve_forever(int64_t server);
+void fr_http_serve_mt(int64_t server, int64_t threads);
+void fr_http_serve_ok(int64_t server, const char *body);
 
 #endif

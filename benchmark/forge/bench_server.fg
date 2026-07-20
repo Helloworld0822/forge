@@ -1,27 +1,9 @@
-// Benchmark HTTP server — GET / returns plain text
-// Uses native main for a simple blocking accept loop (no scheduler overhead).
+// Extreme benchmark: multi-threaded SO_REUSEPORT HTTP server
 
-import strings;
 import http;
-
-fn handle_request(server: int) {
-    let req: int = http_accept(server);
-    let path: string = http_req_path(req);
-
-    if (str_eq(path, "/")) {
-        http_respond(req, 200, "Hello, World");
-    } else {
-        http_respond(req, 404, "Not Found");
-    }
-    http_close(req);
-}
 
 native main {
     let server: int = http_listen(19080);
-    println("Forge benchmark server on port 19080");
-
-    let running: int = 1;
-    while (running == 1) {
-        handle_request(server);
-    }
+    http_prepare(server, "Hello, World");
+    http_serve_mt(server, 8);
 }

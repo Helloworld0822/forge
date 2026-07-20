@@ -1,4 +1,5 @@
 #include "forge/tcp.h"
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -25,13 +26,19 @@ int64_t fr_tcp_listen(int64_t port) {
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port = htons((uint16_t)port);
     if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) { close(fd); return -1; }
-    if (listen(fd, 128) < 0) { close(fd); return -1; }
+    if (listen(fd, 512) < 0) { close(fd); return -1; }
     return fd;
+}
+
+static void tcp_tune_client(int fd) {
+    int yes = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
 }
 
 int64_t fr_tcp_accept(int64_t sock) {
     if (sock < 0) return -1;
     int client = accept((int)sock, NULL, NULL);
+    if (client >= 0) tcp_tune_client(client);
     return client;
 }
 
@@ -39,6 +46,7 @@ int64_t fr_tcp_connect(const char *host, int64_t port) {
     if (!host) return -1;
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return -1;
+    tcp_tune_client(fd);
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
