@@ -5,6 +5,8 @@
 #include "lexer.h"
 #include "parser.h"
 #include "codegen.h"
+#include "optimize.h"
+#include "driver.h"
 
 static char *read_file(const char *path, size_t *out_len) {
     FILE *f = fopen(path, "rb");
@@ -25,10 +27,18 @@ static char *read_file(const char *path, size_t *out_len) {
 }
 
 static void usage(const char *prog) {
-    fprintf(stderr, "Forge %s - Hybrid Process + Coroutine language (AOT -> C)\n", FORGE_VERSION);
+    fprintf(stderr, "Forge %s - AOT native compiler\n", FORGE_VERSION);
     fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  %s <input.fg> [-o output.c] [-I include-dir]\n", prog);
-    fprintf(stderr, "  %s --lib <input.fg> -o output.c --header output.h\n", prog);
+    fprintf(stderr, "  %s <input.fg> -o <binary>          Compile directly to native executable\n", prog);
+    fprintf(stderr, "  %s <input.fg> -o <output.c> --emit-c   Emit C source only\n", prog);
+    fprintf(stderr, "  %s --lib <input.fg> -o <lib.a> --header <lib.h>\n", prog);
+    fprintf(stderr, "Options:\n");
+    fprintf(stderr, "  --emit-c           Emit C instead of a native binary\n");
+    fprintf(stderr, "  --forge-root PATH  Project root (include/, build/lib)\n");
+    fprintf(stderr, "  --lib-dir PATH     Directory containing libforge_*.a\n");
+    fprintf(stderr, "  -I PATH            Extra include directory\n");
+    fprintf(stderr, "  -l NAME             Link libforge_NAME.a (repeatable)\n");
+    fprintf(stderr, "  --keep-temp        Keep intermediate object files\n");
 }
 
 int main(int argc, char **argv) {
@@ -42,6 +52,15 @@ int main(int argc, char **argv) {
     const char *output = NULL;
     const char *header = NULL;
 
+    ForgeDriverConfig cfg;
+    forge_driver_config_init(&cfg);
+    forge_driver_detect_paths(&cfg, argv[0]);
+
+    const char *includes[32];
+    const char *link_libs[32];
+    size_t include_count = 0;
+    size_t link_lib_count = 0;
+
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--lib") == 0) {
             lib_mode = true;
@@ -49,12 +68,28 @@ int main(int argc, char **argv) {
             output = argv[++i];
         } else if (strcmp(argv[i], "--header") == 0 && i + 1 < argc) {
             header = argv[++i];
-        } else if (strcmp(argv[i], "-I") == 0) {
-            i++;
+        } else if (strcmp(argv[i], "--emit-c") == 0) {
+            cfg.emit_c_only = true;
+        } else if (strcmp(argv[i], "--forge-root") == 0 && i + 1 < argc) {
+            cfg.forge_root = argv[++i];
+            forge_driver_detect_paths(&cfg, argv[0]);
+        } else if (strcmp(argv[i], "--lib-dir") == 0 && i + 1 < argc) {
+            cfg.lib_dir = argv[++i];
+        } else if (strcmp(argv[i], "--keep-temp") == 0) {
+            cfg.keep_intermediate = true;
+        } else if (strcmp(argv[i], "-I") == 0 && i + 1 < argc) {
+            includes[include_count++] = argv[++i];
+        } else if (strcmp(argv[i], "-l") == 0 && i + 1 < argc) {
+            link_libs[link_lib_count++] = argv[++i];
         } else if (argv[i][0] != '-') {
             input = argv[i];
         }
     }
+
+    cfg.extra_includes = includes;
+    cfg.extra_include_count = include_count;
+    cfg.link_libs = link_libs;
+    cfg.link_lib_count = link_lib_count;
 
     if (!input) {
         usage(argv[0]);
@@ -71,36 +106,21 @@ int main(int argc, char **argv) {
     Lexer lx;
     lexer_init(&lx, src, len);
     Program prog = parse_program(&lx);
+    optimize_program(&prog);
 
+    int rc = 0;
     if (lib_mode) {
         if (!output) {
             fprintf(stderr, "forge: library mode requires -o\n");
-            return 1;
+            rc = 1;
+        } else {
+            rc = forge_driver_compile_library(&prog, output, header, &cfg);
         }
-        FILE *out_c = fopen(output, "w");
-        FILE *out_h = fopen(header, "w");
-        if (!out_c || !out_h) {
-            fprintf(stderr, "forge: cannot write library output\n");
-            return 1;
-        }
-        codegen_emit_library(&prog, out_c, out_h, "forge_runtime.h");
-        fclose(out_c);
-        fclose(out_h);
     } else {
-        FILE *out = stdout;
-        if (output) {
-            out = fopen(output, "w");
-            if (!out) {
-                fprintf(stderr, "forge: cannot write '%s'\n", output);
-                free(src);
-                return 1;
-            }
-        }
-        codegen_emit(&prog, out, "forge_runtime.h");
-        if (output) fclose(out);
+        rc = forge_driver_compile_program(&prog, output, &cfg);
     }
 
     program_free(&prog);
     free(src);
-    return 0;
+    return rc;
 }
