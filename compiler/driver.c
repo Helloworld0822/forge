@@ -160,7 +160,7 @@ static int link_object(const char *obj_path, const char *output_path, const Forg
 void forge_driver_config_init(ForgeDriverConfig *cfg) {
     memset(cfg, 0, sizeof(*cfg));
     cfg->cc = "clang";
-    cfg->opt_level = 2;
+    cfg->opt_level = 3;
 }
 
 void forge_driver_detect_paths(ForgeDriverConfig *cfg, const char *argv0) {

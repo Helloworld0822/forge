@@ -116,12 +116,12 @@ curl http://127.0.0.1:19081/
 ## HTTP Benchmark (Forge vs Python)
 
 Both servers return `Hello, World` (13 bytes) with `Connection: close`.  
-Benchmark uses **10,000 requests** at **200 concurrent** connections on Linux.
+Benchmark uses **1,000,000 requests** at **1,000 concurrent** connections on Linux.
 
 | Implementation | Port | Requests/sec | Notes |
 |----------------|------|--------------|-------|
-| **Forge** (AOT native, epoll + REUSEPORT workers) | 19080 | **~4,700+** | `benchmark/forge/bench_server.fg` |
-| **Python 3** (stdlib socket) | 19081 | **~3,000** | `benchmark/python/server.py` |
+| **Forge** (AOT native, epoll + REUSEPORT + connection pool) | 19080 | **~12,300** | `benchmark/forge/bench_server.fg` |
+| **Python 3** (stdlib socket) | 19081 | **~8,400** | `benchmark/python/server.py` |
 
 Measured on: Linux 7.1.2-arch3-1 x86_64 (2026-07-20). Results vary ±5% run-to-run.
 
@@ -146,7 +146,7 @@ The original Forge benchmark path paid avoidable per-request cost:
 - Stack-buffered header read (no per-request `malloc`) for the general `http_accept` path
 - Single-buffer `http_respond` (one `send` when response fits in 576 bytes)
 - `http_prepare` / `http_serve_forever` — single-threaded epoll accept loop
-- `http_serve_mt(server, n)` — `n` epoll workers with `SO_REUSEPORT` (`n=0` → CPU count)
+- `http_serve_mt(server, n)` — `2×CPU` REUSEPORT accept workers (`n=0`) + `8×` sharded connection handler threads
 - Linux fast path: `accept4(SOCK_NONBLOCK)` then immediate respond/close (no client epoll)
 - Worker threads pinned to CPUs; listen backlog 4096 and 64 KiB socket buffers
 

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdatomic.h>
 
 #if !defined(FORGE_OS_WINDOWS)
 #include <errno.h>
@@ -276,6 +277,133 @@ static void serve_client(fr_http_server_t *srv, int client) {
     fr_sock_close(client);
 }
 
+#define HTTP_CONN_SHARD_CAP 4096
+#define HTTP_CONN_MAX_SHARDS 64
+
+typedef struct {
+    fr_mutex_t *lock;
+    fr_cond_t *not_empty;
+    int fds[HTTP_CONN_SHARD_CAP];
+    int head;
+    int tail;
+    int count;
+} http_conn_shard_t;
+
+typedef struct {
+    http_conn_shard_t shards[HTTP_CONN_MAX_SHARDS];
+    fr_http_server_t *srv;
+    int nshards;
+    int active;
+    atomic_uint push_seq;
+} http_conn_pool_t;
+
+static http_conn_pool_t g_pool;
+static int g_pool_enabled;
+
+static void http_conn_pool_init(fr_http_server_t *srv) {
+    int cpus = fr_platform_cpu_count();
+    if (cpus < 1) cpus = 1;
+    memset(&g_pool, 0, sizeof(g_pool));
+    g_pool.srv = srv;
+    g_pool.active = 1;
+    g_pool.nshards = cpus * 2;
+    if (g_pool.nshards > HTTP_CONN_MAX_SHARDS) g_pool.nshards = HTTP_CONN_MAX_SHARDS;
+    if (g_pool.nshards < 4) g_pool.nshards = 4;
+    atomic_init(&g_pool.push_seq, 0);
+    for (int i = 0; i < g_pool.nshards; i++) {
+        g_pool.shards[i].lock = fr_mutex_create();
+        g_pool.shards[i].not_empty = fr_cond_create();
+    }
+    g_pool_enabled = 1;
+}
+
+static int http_conn_shard_try_push(http_conn_shard_t *shard, int client) {
+    fr_mutex_lock(shard->lock);
+    if (shard->count >= HTTP_CONN_SHARD_CAP) {
+        fr_mutex_unlock(shard->lock);
+        return 0;
+    }
+    shard->fds[shard->tail] = client;
+    shard->tail = (shard->tail + 1) % HTTP_CONN_SHARD_CAP;
+    shard->count++;
+    fr_cond_broadcast(shard->not_empty);
+    fr_mutex_unlock(shard->lock);
+    return 1;
+}
+
+static int http_conn_shard_try_pop(http_conn_shard_t *shard) {
+    fr_mutex_lock(shard->lock);
+    if (shard->count == 0) {
+        fr_mutex_unlock(shard->lock);
+        return -1;
+    }
+    int client = shard->fds[shard->head];
+    shard->head = (shard->head + 1) % HTTP_CONN_SHARD_CAP;
+    shard->count--;
+    fr_mutex_unlock(shard->lock);
+    return client;
+}
+
+static int http_conn_shard_pop_wait(http_conn_shard_t *shard) {
+    fr_mutex_lock(shard->lock);
+    while (shard->count == 0 && g_pool.active) {
+        fr_cond_wait(shard->not_empty, shard->lock);
+    }
+    if (!g_pool.active && shard->count == 0) {
+        fr_mutex_unlock(shard->lock);
+        return -1;
+    }
+    int client = shard->fds[shard->head];
+    shard->head = (shard->head + 1) % HTTP_CONN_SHARD_CAP;
+    shard->count--;
+    fr_mutex_unlock(shard->lock);
+    return client;
+}
+
+static void http_conn_handoff(fr_http_server_t *srv, int client) {
+    if (!g_pool_enabled) {
+        serve_client(srv, client);
+        return;
+    }
+    unsigned seq = atomic_fetch_add(&g_pool.push_seq, 1);
+    for (int t = 0; t < g_pool.nshards; t++) {
+        int shard = (int)((seq + (unsigned)t) % (unsigned)g_pool.nshards);
+        if (http_conn_shard_try_push(&g_pool.shards[shard], client)) return;
+    }
+    serve_client(srv, client);
+}
+
+static int http_conn_take(int worker_id) {
+    int primary = worker_id % g_pool.nshards;
+    for (int t = 0; t < g_pool.nshards; t++) {
+        int shard = (primary + t) % g_pool.nshards;
+        int client = http_conn_shard_try_pop(&g_pool.shards[shard]);
+        if (client >= 0) return client;
+    }
+    return http_conn_shard_pop_wait(&g_pool.shards[primary]);
+}
+
+static void *http_conn_worker_main(void *arg) {
+    int worker_id = (int)(intptr_t)arg;
+    int cpus = fr_platform_cpu_count();
+    if (cpus > 0) fr_thread_pin_cpu(worker_id % cpus);
+    for (;;) {
+        int client = http_conn_take(worker_id);
+        if (client < 0) return NULL;
+        serve_client(g_pool.srv, client);
+    }
+}
+
+static int http_conn_pool_start(int serve_workers) {
+    if (serve_workers < 1) serve_workers = 1;
+    for (int i = 0; i < serve_workers; i++) {
+        fr_thread_t *tid = NULL;
+        if (fr_thread_start(&tid, http_conn_worker_main, (void *)(intptr_t)i) != 0) return -1;
+        fr_thread_detach(tid);
+    }
+    return 0;
+}
+
 #if !defined(FORGE_OS_LINUX)
 static void drain_accept_queue(int listen_fd, fr_http_server_t *srv) {
     for (;;) {
@@ -288,7 +416,7 @@ static void drain_accept_queue(int listen_fd, fr_http_server_t *srv) {
 #endif
             continue;
         }
-        serve_client(srv, client);
+        http_conn_handoff(srv, client);
     }
 }
 #endif
@@ -318,7 +446,7 @@ static void http_serve_event_loop(int listen_fd, fr_http_server_t *srv) {
                     if (errno == EAGAIN || errno == EWOULDBLOCK) break;
                     continue;
                 }
-                serve_client(srv, client);
+                http_conn_handoff(srv, client);
             }
         }
     }
@@ -375,25 +503,40 @@ static void *http_worker_main(void *arg) {
     return NULL;
 }
 
-/* Multi-worker epoll: each thread owns a REUSEPORT listen socket on the same port. */
+/* Multi-worker epoll + connection thread pool for high concurrency. */
 void fr_http_serve_mt(int64_t server, int64_t threads) {
     if (server < 0 || server >= 32) return;
     fr_http_server_t *srv = &g_servers[server];
     if (!srv->cached_resp || srv->cached_len == 0) return;
 
-    int n = (int)(threads > 0 ? threads : fr_platform_cpu_count());
-    if (n < 1) n = 1;
+    int cpus = fr_platform_cpu_count();
+    if (cpus < 1) cpus = 1;
 
-    if (n == 1) {
+    int accept_workers = (int)(threads > 0 ? threads : cpus * 2);
+    int serve_workers = accept_workers * 8;
+    if (serve_workers < 16) serve_workers = 16;
+    if (serve_workers > 1024) serve_workers = 1024;
+
+    http_conn_pool_init(srv);
+    if (http_conn_pool_start(serve_workers) != 0) {
+        g_pool_enabled = 0;
         http_serve_event_loop((int)server, srv);
         return;
     }
 
-    http_worker_ctx_t *ctxs = (http_worker_ctx_t *)calloc((size_t)n, sizeof(http_worker_ctx_t));
-    if (!ctxs) return;
+    if (accept_workers == 1) {
+        http_serve_event_loop((int)server, srv);
+        return;
+    }
+
+    http_worker_ctx_t *ctxs = (http_worker_ctx_t *)calloc((size_t)accept_workers, sizeof(http_worker_ctx_t));
+    if (!ctxs) {
+        http_serve_event_loop((int)server, srv);
+        return;
+    }
 
     int started = 0;
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < accept_workers; i++) {
         int64_t fd = fr_tcp_listen_reuseport(srv->port);
         if (fd < 0) continue;
         ctxs[started].listen_fd = (int)fd;

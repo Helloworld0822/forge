@@ -1,4 +1,4 @@
-// Benchmark: epoll workers with SO_REUSEPORT (threads=0 → CPU count)
+// Benchmark: REUSEPORT accept workers + sharded connection thread pool (threads=0 → auto)
 
 import http;
 
