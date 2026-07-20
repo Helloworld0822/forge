@@ -172,6 +172,27 @@ add_custom_command(
 )
 add_custom_target(forge-selfhost-control DEPENDS "${FORGE_SELFHOST_CONTROL_C}")
 
+# Fixed-point check: stage2 output recompiles to identical stage3 output
+set(FORGE_STAGE3_C "${CMAKE_BINARY_DIR}/generated/forge-stage3.c")
+set(FORGE_STAGE3_BIN "${CMAKE_BINARY_DIR}/bin/forge-stage3")
+set(FORGE_STAGE4_C "${CMAKE_BINARY_DIR}/generated/forge-stage4.c")
+add_custom_command(
+    OUTPUT "${FORGE_STAGE4_C}"
+    COMMAND "${FORGE_STAGE2_BIN}" "${FORGE_BOOTSTRAP_SRC}" -o "${FORGE_STAGE3_C}"
+    COMMAND ${CMAKE_C_COMPILER} -std=c11 -O3
+        "-I${CMAKE_SOURCE_DIR}/include"
+        "${FORGE_STAGE3_C}"
+        -o "${FORGE_STAGE3_BIN}"
+        "-L${CMAKE_BINARY_DIR}/lib"
+        -lforge_std -lforge_runtime -lm
+    COMMAND "${FORGE_STAGE3_BIN}" "${FORGE_BOOTSTRAP_SRC}" -o "${FORGE_STAGE4_C}"
+    COMMAND ${CMAKE_COMMAND} -E compare_files "${FORGE_STAGE3_C}" "${FORGE_STAGE4_C}"
+    DEPENDS forge-selfhost "${FORGE_BOOTSTRAP_SRC}"
+    COMMENT "Self-host verify: stage3 recompiles compiler.fg to identical output"
+    VERBATIM
+)
+add_custom_target(forge-selfhost-verify DEPENDS "${FORGE_STAGE4_C}")
+
 # Benchmark HTTP server (Forge)
 set(FORGE_BENCH_SRC "${CMAKE_SOURCE_DIR}/benchmark/forge/bench_server.fg")
 set(FORGE_BENCH_BIN "${CMAKE_BINARY_DIR}/bin/bench_server")
