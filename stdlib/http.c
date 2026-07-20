@@ -2,6 +2,7 @@
 #include "forge/tcp.h"
 #include "forge/platform.h"
 #include "forge/thread.h"
+#include "forge/arena.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -123,7 +124,7 @@ int64_t fr_http_listen(int64_t port) {
 
 static void parse_http_request(const char *raw, fr_http_req_t *req) {
     req->method[0] = req->path[0] = '\0';
-    if (req->body) { free(req->body); req->body = NULL; }
+    req->body = NULL;
 
     const char *line_end = strstr(raw, "\r\n");
     if (!line_end) return;
@@ -137,8 +138,8 @@ static void parse_http_request(const char *raw, fr_http_req_t *req) {
     const char *body = strstr(raw, "\r\n\r\n");
     if (body && body[4]) {
         body += 4;
-        req->body = (char *)malloc(strlen(body) + 1);
-        if (req->body) strcpy(req->body, body);
+        fr_arena_t *arena = fr_arena_tls();
+        req->body = fr_arena_strdup(arena, body);
     }
 }
 
@@ -196,9 +197,10 @@ void fr_http_respond(int64_t req, int64_t status, const char *body) {
 
 void fr_http_close(int64_t req) {
     if (req < 0 || req >= 128) return;
-    if (g_reqs[req].body) { free(g_reqs[req].body); g_reqs[req].body = NULL; }
+    fr_arena_tls_reset();
     fr_tcp_close(g_reqs[req].sock);
     g_reqs[req].sock = -1;
+    g_reqs[req].body = NULL;
 }
 
 void fr_http_server_close(int64_t server) {

@@ -205,8 +205,46 @@ static Expr *parse_or(Parser *p) {
     return left;
 }
 
+static Expr *pipe_rhs_to_call(Expr *left, Expr *right, Parser *p) {
+    if (right->kind == EXPR_CALL) {
+        size_t n = right->as.call.arg_count + 1;
+        Expr **args = (Expr **)calloc(n, sizeof(Expr *));
+        if (!args) forge_die("out of memory");
+        args[0] = left;
+        for (size_t i = 1; i < n; i++) args[i] = right->as.call.args[i - 1];
+        free(right->as.call.args);
+        right->as.call.args = args;
+        right->as.call.arg_count = n;
+        return right;
+    }
+    if (right->kind == EXPR_QUAL_CALL) {
+        size_t n = right->as.qual_call.arg_count + 1;
+        Expr **args = (Expr **)calloc(n, sizeof(Expr *));
+        if (!args) forge_die("out of memory");
+        args[0] = left;
+        for (size_t i = 1; i < n; i++) args[i] = right->as.qual_call.args[i - 1];
+        free(right->as.qual_call.args);
+        right->as.qual_call.args = args;
+        right->as.qual_call.arg_count = n;
+        return right;
+    }
+    if (right->kind == EXPR_IDENT) {
+        return expr_call(right->as.ident, &left, 1);
+    }
+    parser_error(p, "pipe right-hand side must be a function call");
+    return left;
+}
+
+static Expr *parse_pipe(Parser *p) {
+    Expr *left = parse_or(p);
+    while (lexer_match(p->lx, TOK_PIPE)) {
+        left = pipe_rhs_to_call(left, parse_or(p), p);
+    }
+    return left;
+}
+
 static Expr *parse_expr(Parser *p) {
-    return parse_or(p);
+    return parse_pipe(p);
 }
 
 static Block *parse_block(Parser *p) {
@@ -258,6 +296,36 @@ static Stmt *parse_stmt(Parser *p) {
         if (lexer_peek(p->lx).kind != TOK_SEMI) e = parse_expr(p);
         expect(p, TOK_SEMI);
         return stmt_return(e);
+    }
+    if (lexer_match(p->lx, TOK_KW_MATCH)) {
+        Expr *scrutinee = parse_expr(p);
+        expect(p, TOK_LBRACE);
+        MatchArm *arms = NULL, *tail = NULL;
+        while (!lexer_match(p->lx, TOK_RBRACE)) {
+            MatchArm *arm = (MatchArm *)calloc(1, sizeof(MatchArm));
+            if (lexer_peek(p->lx).kind == TOK_INT) {
+                Token t = lexer_next(p->lx);
+                arm->int_pat = t.int_val;
+            } else {
+                Token t = lexer_peek(p->lx);
+                expect(p, TOK_IDENT);
+                if (!forge_str_eq(token_str(t), forge_str("_"))) {
+                    parser_error(p, "match pattern must be integer or _");
+                }
+                arm->wildcard = true;
+            }
+            expect(p, TOK_FAT_ARROW);
+            Block *body = (Block *)calloc(1, sizeof(Block));
+            if (lexer_peek(p->lx).kind == TOK_LBRACE) {
+                body = parse_block(p);
+            } else {
+                block_append(body, parse_stmt(p));
+            }
+            arm->body = body;
+            if (!arms) arms = tail = arm;
+            else { tail->next = arm; tail = arm; }
+        }
+        return stmt_match(scrutinee, arms);
     }
     if (lexer_match(p->lx, TOK_KW_IF)) {
         expect(p, TOK_LPAREN);
@@ -684,6 +752,16 @@ Program parse_program(Lexer *lx) {
             prog.process_count++;
             prog.processes = (ProcessDecl *)realloc(prog.processes, prog.process_count * sizeof(ProcessDecl));
             prog.processes[prog.process_count - 1] = parse_process(&p);
+        } else if (t.kind == TOK_KW_CONST) {
+            lexer_next(p.lx);
+            Token name = lexer_peek(p.lx);
+            expect(&p, TOK_IDENT);
+            expect(&p, TOK_EQ);
+            Expr *val = parse_expr(&p);
+            expect(&p, TOK_SEMI);
+            prog.const_count++;
+            prog.consts = (ConstDecl *)realloc(prog.consts, prog.const_count * sizeof(ConstDecl));
+            prog.consts[prog.const_count - 1] = (ConstDecl){ token_str(name), val };
         } else if (t.kind == TOK_KW_FN) {
             prog.fn_count++;
             prog.functions = (FnDecl *)realloc(prog.functions, prog.fn_count * sizeof(FnDecl));

@@ -223,6 +223,25 @@ Stmt *stmt_block(Block *b) {
     return s;
 }
 
+Stmt *stmt_match(Expr *scrutinee, MatchArm *arms) {
+    Stmt *s = stmt_new(STMT_MATCH);
+    s->as.match_stmt.scrutinee = scrutinee;
+    s->as.match_stmt.arms = arms;
+    return s;
+}
+
+static void free_stmts(Stmt *s);
+
+static void free_match_arms(MatchArm *arms) {
+    while (arms) {
+        MatchArm *next = arms->next;
+        free_stmts(arms->body->first);
+        free(arms->body);
+        free(arms);
+        arms = next;
+    }
+}
+
 static void free_expr(Expr *e) {
     if (!e) return;
     switch (e->kind) {
@@ -300,6 +319,10 @@ static void free_stmts(Stmt *s) {
             free_stmts(s->as.block->first);
             free(s->as.block);
             break;
+        case STMT_MATCH:
+            free_expr(s->as.match_stmt.scrutinee);
+            free_match_arms(s->as.match_stmt.arms);
+            break;
         default:
             break;
         }
@@ -352,4 +375,8 @@ void program_free(Program *p) {
         free(p->supervisors[i].children);
     }
     free(p->supervisors);
+    for (size_t i = 0; i < p->const_count; i++) {
+        free_expr(p->consts[i].value);
+    }
+    free(p->consts);
 }

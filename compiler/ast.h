@@ -96,7 +96,8 @@ struct Stmt {
         STMT_BREAK,
         STMT_CONTINUE,
         STMT_BLOCK,
-        STMT_AWAIT
+        STMT_AWAIT,
+        STMT_MATCH
     } kind;
     union {
         struct {
@@ -140,6 +141,10 @@ struct Stmt {
         } assign;
         Expr *await_expr;
         Block *block;
+        struct {
+            Expr *scrutinee;
+            struct MatchArm *arms;
+        } match_stmt;
     } as;
     Stmt *next;
 };
@@ -148,6 +153,18 @@ struct Block {
     Stmt *first;
     Stmt *last;
 };
+
+typedef struct MatchArm {
+    bool wildcard;
+    int64_t int_pat;
+    Block *body;
+    struct MatchArm *next;
+} MatchArm;
+
+typedef struct ConstDecl {
+    ForgeStr name;
+    Expr *value;
+} ConstDecl;
 
 struct Param {
     ForgeStr name;
@@ -238,6 +255,8 @@ typedef struct {
     size_t fn_count;
     SupervisorDecl *supervisors;
     size_t supervisor_count;
+    ConstDecl *consts;
+    size_t const_count;
 } Program;
 
 ForgeType forge_type_void(void);
@@ -278,6 +297,7 @@ Stmt *stmt_assign(ForgeStr name, Expr *value);
 Stmt *stmt_break(void);
 Stmt *stmt_continue(void);
 Stmt *stmt_block(Block *b);
+Stmt *stmt_match(Expr *scrutinee, MatchArm *arms);
 
 void program_free(Program *p);
 

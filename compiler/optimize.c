@@ -155,6 +155,15 @@ static void optimize_block(Block *b) {
         case STMT_BLOCK:
             optimize_block(s->as.block);
             break;
+        case STMT_MATCH: {
+            s->as.match_stmt.scrutinee = optimize_expr(s->as.match_stmt.scrutinee);
+            for (MatchArm *arm = s->as.match_stmt.arms; arm; arm = arm->next)
+                optimize_block(arm->body);
+            break;
+        }
+        case STMT_AWAIT:
+            s->as.await_expr = optimize_expr(s->as.await_expr);
+            break;
         default:
             break;
         }
@@ -162,6 +171,10 @@ static void optimize_block(Block *b) {
 }
 
 void optimize_program(Program *prog) {
+    for (size_t i = 0; i < prog->const_count; i++) {
+        if (prog->consts[i].value)
+            prog->consts[i].value = optimize_expr(prog->consts[i].value);
+    }
     for (size_t i = 0; i < prog->fn_count; i++)
         if (!prog->functions[i].is_extern) optimize_block(&prog->functions[i].body);
     for (size_t i = 0; i < prog->native_count; i++)

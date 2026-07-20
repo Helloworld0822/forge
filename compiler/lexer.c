@@ -57,6 +57,7 @@ static TokenKind keyword_kind(ForgeStr s) {
         {"library", TOK_KW_LIBRARY},
         {"export", TOK_KW_EXPORT},
         {"own", TOK_KW_OWN}, {"move", TOK_KW_MOVE}, {"await", TOK_KW_AWAIT},
+        {"match", TOK_KW_MATCH}, {"const", TOK_KW_CONST},
     };
     for (size_t i = 0; i < sizeof(kws) / sizeof(kws[0]); i++) {
         ForgeStr kw = forge_str(kws[i].kw);
@@ -193,6 +194,10 @@ Token lexer_next(Lexer *lx) {
             lx->pos++; lx->col++;
             return make_token(lx, TOK_EQEQ, forge_str("=="));
         }
+        if (lx->pos < lx->len && lx->src[lx->pos] == '>') {
+            lx->pos++; lx->col++;
+            return make_token(lx, TOK_FAT_ARROW, forge_str("=>"));
+        }
         return make_token(lx, TOK_EQ, forge_str("="));
     case '<':
         if (lx->pos < lx->len && lx->src[lx->pos] == '=') {
@@ -216,6 +221,10 @@ Token lexer_next(Lexer *lx) {
         if (lx->pos < lx->len && lx->src[lx->pos] == '|') {
             lx->pos++; lx->col++;
             return make_token(lx, TOK_OROR, forge_str("||"));
+        }
+        if (lx->pos < lx->len && lx->src[lx->pos] == '>') {
+            lx->pos++; lx->col++;
+            return make_token(lx, TOK_PIPE, forge_str("|>"));
         }
         break;
     default:

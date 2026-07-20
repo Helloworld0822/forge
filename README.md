@@ -17,6 +17,11 @@ Forge source (`.fg`) is compiled directly to native binaries. The compiler strea
 - **User libraries** — build static libraries with `library` / `export` / `import`
 - **M:N scheduler** — multi-threaded worker pool with work-stealing queues (`fr_scheduler_create(0)` = auto CPU count)
 - **Event loop** — epoll (Linux), kqueue (macOS), or select (Windows); `await fd` in coroutines yields until readable
+- **Pipe operator** — `value |> fn()` passes value as the first argument (Elixir-style)
+- **Pattern matching** — `match expr { pat => stmt, _ => default }` on integers
+- **Comptime constants** — `const NAME = expr` folded at compile time
+- **Arena allocator** — bump allocation for HTTP request bodies (per-request reset)
+- **Preemptive scheduling** — 2000-reduction budget per coroutine (BEAM-style)
 - **Ownership** — `own let` for heap strings, `move(x)` and `send proc, tag, move(msg)` for move semantics
 - **Supervisor** — Elixir-style fault-recovery policies
 
@@ -65,6 +70,8 @@ cmake --build build
 ./build/bin/web_server    # curl http://127.0.0.1:8080
 ./build/bin/ownership     # own let + move demo
 ./build/bin/event_echo    # await + epoll TCP echo (port 19090)
+./build/bin/pipe          # pipe operator demo
+./build/bin/match         # pattern matching + const demo
 ```
 
 ### Simple Web Servers

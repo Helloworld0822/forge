@@ -1,4 +1,5 @@
 // Forge self-hosted compiler (stage-1)
+// Compiles a subset of Forge to C for bootstrap verification.
 // Usage: forge-stage1 input.fg -o output.c
 
 import strings;
@@ -68,54 +69,136 @@ fn emit_println_stmt(line: string): string {
     return out;
 }
 
-fn compile_process_body(body: string): string {
+fn emit_match_line(line: string): string {
+    let out: string = "";
+    let i: int = 0;
+    let pat: string = "";
+    while (i < str_len(line)) {
+        if (str_char_at(line, i) == 123) {
+            break;
+        }
+        i = i + 1;
+    }
+    i = i + 1;
+    while (i < str_len(line)) {
+        let ch: int = str_char_at(line, i);
+        if (ch == 32 || ch == 10) {
+            i = i + 1;
+            continue;
+        }
+        if (ch == 61 && str_char_at(line, i + 1) == 62) {
+            break;
+        }
+        pat = str_append(pat, ch);
+        i = i + 1;
+    }
+    pat = str_trim(pat);
+    i = i + 2;
+    let body: string = "";
+    while (i < str_len(line)) {
+        let ch: int = str_char_at(line, i);
+        if (ch == 44 || ch == 125) {
+            break;
+        }
+        body = str_append(body, ch);
+        i = i + 1;
+    }
+    body = str_trim(body);
+    if (str_eq(pat, "_")) {
+        out = str_append_str(out, "    } else {");
+    } else {
+        out = str_append_str(out, "    } else if (__match_val == ");
+        out = str_append_str(out, pat);
+        out = str_append_str(out, ") {");
+    }
+    out = str_append_str(out, nl());
+    if (str_contains(body, "println(")) {
+        out = str_append_str(out, emit_println_stmt(body));
+    }
+    return out;
+}
+
+fn compile_body_lines(body: string): string {
     let out: string = "";
     let i: int = 0;
     let line: string = "";
+    let in_match: int = 0;
+    let match_scrutinee: string = "";
 
     while (i < str_len(body)) {
         let ch: int = str_char_at(body, i);
         if (ch == 10) {
             line = str_trim(line);
-            if (str_contains(line, "println(")) {
-                out = str_append_str(out, emit_println_stmt(line));
-            } else if (str_contains(line, "let ")) {
-                let rest: string = str_sub(line, 4, str_len(line) - 4);
-                let eq: int = 0;
-                let j: int = 0;
-                while (j < str_len(rest)) {
-                    if (str_char_at(rest, j) == 61) {
-                        eq = j;
-                        break;
-                    }
-                    j = j + 1;
-                }
-                if (eq > 0) {
-                    let lhs: string = str_trim(str_sub(rest, 0, eq));
-                    let rhs: string = str_trim(str_sub(rest, eq + 1, str_len(rest) - eq - 1));
-                    let colon: int = 0;
-                    let k: int = 0;
-                    while (k < str_len(lhs)) {
-                        if (str_char_at(lhs, k) == 58) {
-                            colon = k;
+            if (str_len(line) > 0) {
+                if (str_contains(line, "match ")) {
+                    in_match = 1;
+                    let j: int = 6;
+                    let scr: string = "";
+                    while (j < str_len(line)) {
+                        if (str_char_at(line, j) == 123) {
                             break;
                         }
-                        k = k + 1;
+                        scr = str_append(scr, str_char_at(line, j));
+                        j = j + 1;
                     }
-                    let name: string = str_trim(str_sub(lhs, 0, colon));
-                    let ty: string = str_trim(str_sub(lhs, colon + 1, str_len(lhs) - colon - 1));
-                    let ctype: string = "int64_t";
-                    if (str_eq(ty, "string")) {
-                        ctype = "const char*";
-                    }
-                    out = str_append_str(out, "    ");
-                    out = str_append_str(out, ctype);
-                    out = str_append_str(out, " ");
-                    out = str_append_str(out, name);
-                    out = str_append_str(out, " = ");
-                    out = str_append_str(out, rhs);
+                    match_scrutinee = str_trim(scr);
+                    out = str_append_str(out, "    { int64_t __match_val = ");
+                    out = str_append_str(out, match_scrutinee);
                     out = str_append_str(out, ";");
                     out = str_append_str(out, nl());
+                    out = str_append_str(out, "    if (0) {");
+                    out = str_append_str(out, nl());
+                } else if (in_match == 1) {
+                    if (str_contains(line, "=>")) {
+                        out = str_append_str(out, emit_match_line(line));
+                    }
+                    if (str_char_at(line, 0) == 125) {
+                        out = str_append_str(out, "    }");
+                        out = str_append_str(out, nl());
+                        out = str_append_str(out, "    }");
+                        out = str_append_str(out, nl());
+                        in_match = 0;
+                    }
+                } else if (str_contains(line, "println(")) {
+                    out = str_append_str(out, emit_println_stmt(line));
+                } else if (str_contains(line, "let ")) {
+                    let rest: string = str_sub(line, 4, str_len(line) - 4);
+                    let eq: int = 0;
+                    let j: int = 0;
+                    while (j < str_len(rest)) {
+                        if (str_char_at(rest, j) == 61) {
+                            eq = j;
+                            break;
+                        }
+                        j = j + 1;
+                    }
+                    if (eq > 0) {
+                        let lhs: string = str_trim(str_sub(rest, 0, eq));
+                        let rhs: string = str_trim(str_sub(rest, eq + 1, str_len(rest) - eq - 1));
+                        let colon: int = 0;
+                        let k: int = 0;
+                        while (k < str_len(lhs)) {
+                            if (str_char_at(lhs, k) == 58) {
+                                colon = k;
+                                break;
+                            }
+                            k = k + 1;
+                        }
+                        let name: string = str_trim(str_sub(lhs, 0, colon));
+                        let ty: string = str_trim(str_sub(lhs, colon + 1, str_len(lhs) - colon - 1));
+                        let ctype: string = "int64_t";
+                        if (str_eq(ty, "string")) {
+                            ctype = "const char*";
+                        }
+                        out = str_append_str(out, "    ");
+                        out = str_append_str(out, ctype);
+                        out = str_append_str(out, " ");
+                        out = str_append_str(out, name);
+                        out = str_append_str(out, " = ");
+                        out = str_append_str(out, rhs);
+                        out = str_append_str(out, ";");
+                        out = str_append_str(out, nl());
+                    }
                 }
             }
             line = "";
@@ -127,68 +210,67 @@ fn compile_process_body(body: string): string {
     return out;
 }
 
-fn find_process_body(src: string): string {
-    let found: int = 0;
-    let brace: int = -1;
+fn find_block_after_keyword(src: string, keyword: string): string {
+    let klen: int = str_len(keyword);
     let i: int = 0;
-
-    while (i < str_len(src) - 6) {
-        let slice: string = str_sub(src, i, 7);
-        if (str_eq(slice, "process")) {
-            found = 1;
-            break;
-        }
-        i = i + 1;
-    }
-
-    if (found == 0) {
-        return "";
-    }
-
-    while (i < str_len(src)) {
-        if (str_char_at(src, i) == 123) {
-            brace = i;
-            break;
-        }
-        i = i + 1;
-    }
-
-    if (brace < 0) {
-        return "";
-    }
-
-    let end: int = brace;
-    let depth: int = 0;
-    i = brace;
-    while (i < str_len(src)) {
-        let ch: int = str_char_at(src, i);
-        if (ch == 123) {
-            depth = depth + 1;
-        }
-        if (ch == 125) {
-            depth = depth - 1;
-            if (depth == 0) {
-                end = i;
-                break;
+    while (i < str_len(src) - klen) {
+        if (str_eq(str_sub(src, i, klen), keyword)) {
+            let j: int = i + klen;
+            while (j < str_len(src)) {
+                if (str_char_at(src, j) == 123) {
+                    let end: int = j;
+                    let depth: int = 0;
+                    let p: int = j;
+                    while (p < str_len(src)) {
+                        let ch: int = str_char_at(src, p);
+                        if (ch == 123) {
+                            depth = depth + 1;
+                        }
+                        if (ch == 125) {
+                            depth = depth - 1;
+                            if (depth == 0) {
+                                end = p;
+                                break;
+                            }
+                        }
+                        p = p + 1;
+                    }
+                    return str_sub(src, j + 1, end - j - 1);
+                }
+                j = j + 1;
             }
         }
         i = i + 1;
     }
-
-    return str_sub(src, brace + 1, end - brace - 1);
+    return "";
 }
 
 fn compile_source(src: string): string {
     let out: string = emit_header();
-    let body: string = find_process_body(src);
+    let native_body: string = find_block_after_keyword(src, "native main");
+    let process_body: string = find_block_after_keyword(src, "process main");
 
-    if (str_len(body) == 0) {
+    if (str_len(native_body) > 0) {
+        let init: string = compile_body_lines(native_body);
+        out = str_append_str(out, "int main(int argc, char **argv) {");
+        out = str_append_str(out, nl());
+        out = str_append_str(out, "    fr_os_set_args(argc, argv);");
+        out = str_append_str(out, nl());
+        out = str_append_str(out, init);
+        out = str_append_str(out, "    return 0;");
+        out = str_append_str(out, nl());
+        out = str_append_str(out, "}");
+        out = str_append_str(out, nl());
+        return out;
+    }
+
+    if (str_len(process_body) == 0) {
         out = str_append_str(out, "int main(void) { return 0; }");
         out = str_append_str(out, nl());
         return out;
     }
 
-    let init: string = compile_process_body(body);
+    let init: string = compile_body_lines(process_body);
     out = str_append_str(out, "static void main_init(fr_process_t *proc) {");
     out = str_append_str(out, nl());
     out = str_append_str(out, "    (void)proc;");

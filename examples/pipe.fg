@@ -1,0 +1,15 @@
+import math;
+
+fn double_it(x: int): int {
+    return x * 2;
+}
+
+fn add_ten(x: int): int {
+    return x + 10;
+}
+
+process main {
+    let nums: int = 5;
+    let result: int = nums |> double_it() |> add_ten();
+    println("pipe result:", result);
+}

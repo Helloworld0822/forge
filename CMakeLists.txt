@@ -30,6 +30,7 @@ add_library(forge_std STATIC
     stdlib/udp.c
     stdlib/http.c
     stdlib/json.c
+    runtime/arena.c
 )
 target_include_directories(forge_std PUBLIC include)
 if(NOT WIN32)
@@ -104,7 +105,7 @@ add_custom_command(
         --forge-root "${CMAKE_SOURCE_DIR}" --lib-dir "${CMAKE_BINARY_DIR}/lib"
         -I "${CMAKE_BINARY_DIR}/generated/libs"
         -l forge_greeting -l forge_mathutil
-    DEPENDS forge forge_runtime greeting mathutil "${CMAKE_SOURCE_DIR}/examples/use_library.fg"
+    DEPENDS forge forge_runtime forge_lib_greeting forge_lib_mathutil "${CMAKE_SOURCE_DIR}/examples/use_library.fg"
     COMMENT "Compiling use_library.fg (native)"
     VERBATIM
 )
@@ -141,6 +142,17 @@ add_custom_command(
 )
 
 add_custom_target(forge-selfhost DEPENDS "${FORGE_STAGE2_BIN}")
+
+# Self-hosted compiler compiles match.fg to C (bootstrap verification)
+set(FORGE_SELFHOST_TEST_C "${CMAKE_BINARY_DIR}/generated/selfhost_match.c")
+add_custom_command(
+    OUTPUT "${FORGE_SELFHOST_TEST_C}"
+    COMMAND "${FORGE_STAGE1_BIN}" "${CMAKE_SOURCE_DIR}/examples/match.fg" -o "${FORGE_SELFHOST_TEST_C}"
+    DEPENDS forge-stage1 "${CMAKE_SOURCE_DIR}/examples/match.fg"
+    COMMENT "Self-host test: stage1 compiles match.fg"
+    VERBATIM
+)
+add_custom_target(forge-selfhost-test DEPENDS "${FORGE_SELFHOST_TEST_C}")
 
 # Benchmark HTTP server (Forge)
 set(FORGE_BENCH_SRC "${CMAKE_SOURCE_DIR}/benchmark/forge/bench_server.fg")

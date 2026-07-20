@@ -13,7 +13,10 @@ function(forge_add_library NAME SOURCE)
         VERBATIM
     )
 
+    add_custom_target(forge_lib_${NAME} DEPENDS "${gen_a}" "${gen_h}")
+
     add_library(${NAME} STATIC IMPORTED GLOBAL)
+    add_dependencies(${NAME} forge_lib_${NAME})
     set_target_properties(${NAME} PROPERTIES
         IMPORTED_LOCATION "${gen_a}"
         INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_BINARY_DIR}/generated/libs"

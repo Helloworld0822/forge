@@ -1,0 +1,18 @@
+const HTTP_OK = 200;
+const HTTP_NOT_FOUND = 404;
+
+process main {
+    let code: int = HTTP_OK;
+    match code {
+        200 => { println("OK"); }
+        404 => { println("Not Found"); }
+        _ => { println("Other"); }
+    }
+
+    let n: int = 7;
+    match n {
+        1 => { println("one"); }
+        7 => { println("lucky seven"); }
+        _ => { println("other"); }
+    }
+}

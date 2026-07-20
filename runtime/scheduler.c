@@ -119,6 +119,8 @@ static void event_resume_cb(fr_event_loop_t *loop, int fd, uint32_t events, void
     }
 }
 
+#define FR_REDUCTION_BUDGET 2000
+
 static int run_coro_step(fr_coro_t *c) {
     tls_current_coro = c;
     fr_coro_status_t st = c->fn(c, c->state);
@@ -188,7 +190,13 @@ static void *worker_main(void *arg) {
         }
 
         coro->on_queue = 0;
-        run_coro_step(coro);
+        int budget = FR_REDUCTION_BUDGET;
+        while (budget-- > 0) {
+            if (coro->status != FR_CORO_RUNNING) break;
+            run_coro_step(coro);
+            if (coro->status == FR_CORO_WAITING_IO || coro->status == FR_CORO_WAITING_RECV) break;
+            if (coro->status == FR_CORO_DONE || coro->status == FR_CORO_ERROR) break;
+        }
         if (coro->status == FR_CORO_RUNNING) {
             enqueue_coro(sched, coro);
         }
