@@ -7,6 +7,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if !defined(FORGE_OS_WINDOWS)
+#include <errno.h>
+#include <sys/socket.h>
+#endif
+
+#if defined(FORGE_OS_LINUX)
+#include <sys/epoll.h>
+#include <unistd.h>
+#elif defined(FORGE_OS_MACOS)
+#include <sys/event.h>
+#endif
+
 typedef struct {
     int64_t sock;
     char method[16];
@@ -244,24 +256,118 @@ void fr_http_serve_prepared(int64_t server) {
     fr_sock_close(client);
 }
 
-void fr_http_serve_forever(int64_t server) {
-    if (server < 0 || server >= 32) return;
-    fr_http_server_t *srv = &g_servers[server];
-    const char *resp = srv->cached_resp;
-    size_t rlen = srv->cached_len;
-    if (!resp || rlen == 0) return;
+static int accept_nonblocking(int listen_fd) {
+    fr_socket_t client = accept((fr_socket_t)listen_fd, NULL, NULL);
+    if (client == FR_SOCK_INVALID) return -1;
+    fr_sock_set_tcp_nodelay((int)client);
+    return (int)client;
+}
 
-    while (1) {
-        int client = (int)fr_tcp_accept(server);
-        if (client < 0) continue;
-        char discard[4096];
-        fr_sock_recv(client, discard, sizeof(discard));
-        fr_sock_send(client, resp, rlen);
-        fr_sock_close(client);
+static void serve_client(fr_http_server_t *srv, int client) {
+    char discard[256];
+    fr_sock_recv(client, discard, sizeof(discard));
+    fr_sock_send(client, srv->cached_resp, srv->cached_len);
+    fr_sock_close(client);
+}
+
+static void drain_accept_queue(int listen_fd, fr_http_server_t *srv) {
+    for (;;) {
+        int client = accept_nonblocking(listen_fd);
+        if (client < 0) {
+#if defined(FORGE_OS_WINDOWS)
+            if (fr_sock_err() == WSAEWOULDBLOCK) break;
+#else
+            if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+#endif
+            continue;
+        }
+        serve_client(srv, client);
     }
 }
 
-/* Fast path: read request, respond 200 with fixed body, close — for benchmarks */
+#if defined(FORGE_OS_LINUX)
+static void http_serve_event_loop(int listen_fd, fr_http_server_t *srv) {
+    int epfd = epoll_create1(0);
+    if (epfd < 0) return;
+    fr_sock_set_nonblocking(listen_fd);
+    struct epoll_event ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.events = EPOLLIN;
+    ev.data.fd = listen_fd;
+    if (epoll_ctl(epfd, EPOLL_CTL_ADD, listen_fd, &ev) < 0) {
+        close(epfd);
+        return;
+    }
+    struct epoll_event events[128];
+    for (;;) {
+        int n = epoll_wait(epfd, events, 128, -1);
+        if (n < 0) continue;
+        for (int i = 0; i < n; i++) {
+            int fd = events[i].data.fd;
+            if (fd == listen_fd) {
+                for (;;) {
+                    int client = accept_nonblocking(listen_fd);
+                    if (client < 0) {
+#if defined(FORGE_OS_WINDOWS)
+                        if (fr_sock_err() == WSAEWOULDBLOCK) break;
+#else
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+#endif
+                        continue;
+                    }
+                    fr_sock_set_nonblocking(client);
+                    struct epoll_event cev;
+                    memset(&cev, 0, sizeof(cev));
+                    cev.events = EPOLLIN | EPOLLET;
+                    cev.data.fd = client;
+                    epoll_ctl(epfd, EPOLL_CTL_ADD, client, &cev);
+                }
+            } else {
+                char discard[256];
+                ssize_t r = fr_sock_recv(fd, discard, sizeof(discard));
+                if (r <= 0) {
+                    epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
+                    fr_sock_close(fd);
+                    continue;
+                }
+                fr_sock_send(fd, srv->cached_resp, srv->cached_len);
+                epoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
+                fr_sock_close(fd);
+            }
+        }
+    }
+}
+#elif defined(FORGE_OS_MACOS)
+static void http_serve_event_loop(int listen_fd, fr_http_server_t *srv) {
+    int kq = kqueue();
+    if (kq < 0) return;
+    fr_sock_set_nonblocking(listen_fd);
+    struct kevent change;
+    EV_SET(&change, listen_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+    kevent(kq, &change, 1, NULL, 0, NULL);
+    struct kevent events[64];
+    for (;;) {
+        int n = kevent(kq, NULL, 0, events, 64, NULL);
+        if (n < 0) continue;
+        for (int i = 0; i < n; i++) {
+            if ((int)events[i].ident == listen_fd) drain_accept_queue(listen_fd, srv);
+        }
+    }
+}
+#else
+static void http_serve_event_loop(int listen_fd, fr_http_server_t *srv) {
+    fr_sock_set_nonblocking(listen_fd);
+    for (;;) drain_accept_queue(listen_fd, srv);
+}
+#endif
+
+void fr_http_serve_forever(int64_t server) {
+    if (server < 0 || server >= 32) return;
+    fr_http_server_t *srv = &g_servers[server];
+    if (!srv->cached_resp || srv->cached_len == 0) return;
+    http_serve_event_loop((int)server, srv);
+}
+
 void fr_http_serve_ok(int64_t server, const char *body) {
     if (server < 0 || server >= 32) return;
     fr_http_server_t *srv = &g_servers[server];
@@ -269,41 +375,54 @@ void fr_http_serve_ok(int64_t server, const char *body) {
     fr_http_serve_prepared(server);
 }
 
-/* Multi-threaded accept on the same listen socket (benchmark fast path). */
 typedef struct {
     int listen_fd;
-    const char *resp;
-    size_t resp_len;
-} http_mt_ctx_t;
+    fr_http_server_t *srv;
+} http_worker_ctx_t;
 
-static void *http_mt_worker(void *arg) {
-    http_mt_ctx_t *ctx = (http_mt_ctx_t *)arg;
-    char discard[512];
-    while (1) {
-        int client = (int)fr_tcp_accept(ctx->listen_fd);
-        if (client < 0) continue;
-        fr_sock_recv(client, discard, sizeof(discard));
-        fr_sock_send(client, ctx->resp, ctx->resp_len);
-        fr_sock_close(client);
-    }
+static void *http_worker_main(void *arg) {
+    http_worker_ctx_t *ctx = (http_worker_ctx_t *)arg;
+    http_serve_event_loop(ctx->listen_fd, ctx->srv);
     return NULL;
 }
 
+/* Multi-worker epoll: each thread owns a REUSEPORT listen socket on the same port. */
 void fr_http_serve_mt(int64_t server, int64_t threads) {
     if (server < 0 || server >= 32) return;
     fr_http_server_t *srv = &g_servers[server];
     if (!srv->cached_resp || srv->cached_len == 0) return;
-    int n = (int)(threads > 0 ? threads : 4);
-    int listen_fd = (int)server;
-    http_mt_ctx_t *ctxs = (http_mt_ctx_t *)calloc((size_t)n, sizeof(http_mt_ctx_t));
-    if (!ctxs) return;
-    for (int i = 0; i < n; i++) {
-        ctxs[i].listen_fd = listen_fd;
-        ctxs[i].resp = srv->cached_resp;
-        ctxs[i].resp_len = srv->cached_len;
-        fr_thread_t *tid = NULL;
-        fr_thread_start(&tid, http_mt_worker, &ctxs[i]);
-        fr_thread_detach(tid);
+
+    int n = (int)(threads > 0 ? threads : fr_platform_cpu_count());
+    if (n < 1) n = 1;
+
+    if (n == 1) {
+        http_serve_event_loop((int)server, srv);
+        return;
     }
+
+    http_worker_ctx_t *ctxs = (http_worker_ctx_t *)calloc((size_t)n, sizeof(http_worker_ctx_t));
+    if (!ctxs) return;
+
+    int started = 0;
+    for (int i = 0; i < n; i++) {
+        int64_t fd = fr_tcp_listen_reuseport(srv->port);
+        if (fd < 0) continue;
+        ctxs[started].listen_fd = (int)fd;
+        ctxs[started].srv = srv;
+        fr_thread_t *tid = NULL;
+        if (fr_thread_start(&tid, http_worker_main, &ctxs[started]) != 0) {
+            fr_sock_close((int)fd);
+            continue;
+        }
+        fr_thread_detach(tid);
+        started++;
+    }
+
+    if (started == 0) {
+        free(ctxs);
+        http_serve_event_loop((int)server, srv);
+        return;
+    }
+
     fr_platform_sleep_forever();
 }
