@@ -18,6 +18,7 @@ static const ForgeStdFn STRING_FNS[] = {
     {"str_append", "fr_str_append"},
     {"str_append_str", "fr_str_append_str"},
     {"str_from_int", "fr_str_from_int"},
+    {"str_reset_arena", "fr_str_arena_reset"},
 };
 
 static const ForgeStdFn MATH_FNS[] = {
@@ -37,6 +38,7 @@ static const ForgeStdFn TIME_FNS[] = {
 static const ForgeStdFn FS_FNS[] = {
     {"fs_read", "fr_fs_read"},
     {"fs_write", "fr_fs_write"},
+    {"fs_append", "fr_fs_append"},
     {"fs_exists", "fr_fs_exists"},
     {"fs_remove", "fr_fs_remove"},
 };
@@ -98,10 +100,10 @@ static const ForgeStdFn JSON_FNS[] = {
 
 static const ForgeModule MODULES[] = {
     { .name = { "io", 2 }, .header = "forge/io.h", .fns = IO_FNS, .fn_count = 3 },
-    { .name = { "strings", 7 }, .header = "forge/string.h", .fns = STRING_FNS, .fn_count = 10 },
+    { .name = { "strings", 7 }, .header = "forge/string.h", .fns = STRING_FNS, .fn_count = 11 },
     { .name = { "math", 4 }, .header = "forge/math.h", .fns = MATH_FNS, .fn_count = 6 },
     { .name = { "time", 4 }, .header = "forge/time.h", .fns = TIME_FNS, .fn_count = 2 },
-    { .name = { "fs", 2 }, .header = "forge/fs.h", .fns = FS_FNS, .fn_count = 4 },
+    { .name = { "fs", 2 }, .header = "forge/fs.h", .fns = FS_FNS, .fn_count = 5 },
     { .name = { "os", 2 }, .header = "forge/os.h", .fns = OS_FNS, .fn_count = 4 },
     { .name = { "tcp", 3 }, .header = "forge/tcp.h", .fns = TCP_FNS, .fn_count = 7 },
     { .name = { "udp", 3 }, .header = "forge/udp.h", .fns = UDP_FNS, .fn_count = 5 },

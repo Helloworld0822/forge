@@ -13,5 +13,6 @@ int64_t fr_str_char_at(const char *s, int64_t i);
 char *fr_str_append(const char *s, int64_t ch);
 char *fr_str_append_str(const char *s, const char *t);
 char *fr_str_from_int(int64_t n);
+void fr_str_arena_reset(void);
 
 #endif

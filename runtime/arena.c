@@ -63,7 +63,7 @@ void fr_arena_reset(fr_arena_t *a) {
 }
 
 fr_arena_t *fr_arena_tls(void) {
-    if (!tls_arena) tls_arena = fr_arena_create(64 * 1024);
+    if (!tls_arena) tls_arena = fr_arena_create(4 * 1024 * 1024);
     return tls_arena;
 }
 

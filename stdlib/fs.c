@@ -31,6 +31,18 @@ int fr_fs_write(const char *path, const char *content) {
     return 1;
 }
 
+int fr_fs_append(const char *path, const char *content) {
+    if (!path) return 0;
+    FILE *f = fopen(path, "ab");
+    if (!f) return 0;
+    if (content) {
+        size_t n = strlen(content);
+        if (fwrite(content, 1, n, f) != n) { fclose(f); return 0; }
+    }
+    fclose(f);
+    return 1;
+}
+
 int fr_fs_exists(const char *path) {
     if (!path) return 0;
     FILE *f = fopen(path, "rb");
