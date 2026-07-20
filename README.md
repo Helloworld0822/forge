@@ -242,7 +242,7 @@ Import modules with `import`. Standard modules are included in `libforge_std`.
 | `strings` | `str_len`, `str_concat`, `str_eq`, … |
 | `math` | `abs_i`, `min_i`, `max_i`, `pow_i`, … |
 | `time` | `time_now_ms`, `sleep_ms` |
-| `fs` | `fs_read`, `fs_write`, `fs_exists` |
+| `fs` | `fs_read`, `fs_write`, `fs_append`, `fs_exists`, `fs_remove`, `fs_size`, `fs_is_file`, `fs_is_dir`, `fs_mkdir`, `fs_rename`, `fs_copy`, `fs_list_dir` |
 | `os` | `os_exit`, `os_getenv`, `os_argc`, `os_argv` |
 | `tcp` | `tcp_listen`, `tcp_connect`, `tcp_send`, `tcp_recv` |
 | `udp` | `udp_bind`, `udp_send`, `udp_recv` |

@@ -22,4 +22,6 @@ process main {
     fs_write("/tmp/forge_demo.txt", "forge stdlib");
     let content: string = fs_read("/tmp/forge_demo.txt");
     println("fs:", content);
+    println("fs size:", fs_size("/tmp/forge_demo.txt"));
+    fs_remove("/tmp/forge_demo.txt");
 }

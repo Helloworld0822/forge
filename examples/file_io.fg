@@ -1,0 +1,30 @@
+import fs;
+
+process main {
+    let path: string = "/tmp/forge_file_io.txt";
+    let dir: string = "/tmp/forge_file_io_dir";
+
+    fs_write(path, "hello");
+    fs_append(path, " forge");
+    println(fs_exists(path));
+    println(fs_is_file(path));
+    println(fs_size(path));
+    println(fs_read(path));
+
+    fs_mkdir(dir);
+    println(fs_is_dir(dir));
+    println(fs_list_dir("/tmp/forge_file_io_dir"));
+
+    let copy_path: string = "/tmp/forge_file_io_copy.txt";
+    fs_copy(path, copy_path);
+    println(fs_read(copy_path));
+
+    let renamed: string = "/tmp/forge_file_io_renamed.txt";
+    fs_rename(copy_path, renamed);
+    println(fs_read(renamed));
+
+    fs_remove(renamed);
+    fs_remove(path);
+    fs_remove(dir);
+    println(1);
+}
