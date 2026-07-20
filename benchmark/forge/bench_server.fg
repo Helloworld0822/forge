@@ -1,9 +1,9 @@
-// Extreme benchmark: multi-threaded SO_REUSEPORT HTTP server
+// Benchmark: epoll workers with SO_REUSEPORT (threads=0 → CPU count)
 
 import http;
 
 native main {
     let server: int = http_listen(19080);
     http_prepare(server, "Hello, World");
-    http_serve_mt(server, 8);
+    http_serve_mt(server, 0);
 }

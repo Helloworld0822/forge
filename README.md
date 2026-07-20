@@ -98,13 +98,13 @@ Benchmark uses **2,000 requests** at **50 concurrent** connections on Linux.
 
 | Implementation | Port | Requests/sec | Notes |
 |----------------|------|--------------|-------|
-| **Forge** (AOT native, 8 accept threads) | 19080 | **~4,800** | `benchmark/forge/bench_server.fg` |
+| **Forge** (AOT native, epoll + REUSEPORT workers) | 19080 | **~5,000+** | `benchmark/forge/bench_server.fg` |
 | **Python 3** (stdlib socket) | 19081 | **~4,000** | `benchmark/python/server.py` |
 
 Measured on: Linux 7.1.2-arch3-1 x86_64 (2026-07-20). Results vary ±5% run-to-run.
 
-Forge exceeds raw Python socket performance in this micro-benchmark (~20% faster with `http_serve_mt`).  
-The benchmark uses prebuilt responses and a multi-threaded accept loop in C.
+Forge exceeds raw Python socket performance in this micro-benchmark.  
+The benchmark uses prebuilt responses and per-core epoll workers with `SO_REUSEPORT`.
 
 ### Why Forge was slower (and what we fixed)
 
@@ -123,8 +123,8 @@ The original Forge benchmark path paid avoidable per-request cost:
 
 - Stack-buffered header read (no per-request `malloc`) for the general `http_accept` path
 - Single-buffer `http_respond` (one `send` when response fits in 576 bytes)
-- `http_prepare` / `http_serve_forever` — prebuild the full HTTP response once, run the serve loop entirely in C
-- `http_serve_mt` — multi-threaded `accept` on the same listen socket (used by the benchmark)
+- `http_prepare` / `http_serve_forever` — single-threaded epoll accept loop
+- `http_serve_mt(server, n)` — `n` epoll workers with `SO_REUSEPORT` (`n=0` → CPU count)
 - `TCP_NODELAY` + listen backlog 512 on the TCP layer for real apps
 
 ### Run the benchmark yourself
