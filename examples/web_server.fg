@@ -1,0 +1,26 @@
+import strings;
+import http;
+
+fn handle_request(server: int) {
+    let req: int = http_accept(server);
+    let path: string = http_req_path(req);
+
+    if (str_eq(path, "/")) {
+        http_respond(req, 200, "Hello from Forge!");
+    } else if (str_eq(path, "/health")) {
+        http_respond(req, 200, "ok");
+    } else {
+        http_respond(req, 404, "Not Found");
+    }
+    http_close(req);
+}
+
+native main {
+    let server: int = http_listen(8080);
+    println("Forge web server on http://127.0.0.1:8080");
+
+    let running: int = 1;
+    while (running == 1) {
+        handle_request(server);
+    }
+}

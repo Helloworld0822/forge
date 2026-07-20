@@ -1,5 +1,29 @@
+# Build
 build/
 *.o
 *.a
-*.d
-*.out
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*~
+
+# Python (benchmark)
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+.venv/
+benchmark/python/.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Benchmark output
+benchmark/results.txt
+
+# Local practice builds
+practice/a.out
+practice/*.o
