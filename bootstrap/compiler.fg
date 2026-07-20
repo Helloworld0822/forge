@@ -93,6 +93,7 @@ fn forge_ctype(ty: string): string {
 
 fn map_ident(name: string): string {
     if (str_eq(name, "str_len")) { return "fr_str_len"; }
+    if (str_eq(name, "str_concat")) { return "fr_str_concat"; }
     if (str_eq(name, "str_append")) { return "fr_str_append"; }
     if (str_eq(name, "str_append_str")) { return "fr_str_append_str"; }
     if (str_eq(name, "str_eq")) { return "fr_str_eq"; }
@@ -104,6 +105,32 @@ fn map_ident(name: string): string {
     if (str_eq(name, "fs_read")) { return "fr_fs_read"; }
     if (str_eq(name, "fs_write")) { return "fr_fs_write"; }
     if (str_eq(name, "fs_append")) { return "fr_fs_append"; }
+    if (str_eq(name, "fs_exists")) { return "fr_fs_exists"; }
+    if (str_eq(name, "fs_remove")) { return "fr_fs_remove"; }
+    if (str_eq(name, "fs_size")) { return "fr_fs_size"; }
+    if (str_eq(name, "fs_is_file")) { return "fr_fs_is_file"; }
+    if (str_eq(name, "fs_is_dir")) { return "fr_fs_is_dir"; }
+    if (str_eq(name, "fs_mkdir")) { return "fr_fs_mkdir"; }
+    if (str_eq(name, "fs_rename")) { return "fr_fs_rename"; }
+    if (str_eq(name, "fs_copy")) { return "fr_fs_copy"; }
+    if (str_eq(name, "fs_list_dir")) { return "fr_fs_list_dir"; }
+    if (str_eq(name, "print")) { return "fr_print"; }
+    if (str_eq(name, "print_int")) { return "fr_print_int"; }
+    if (str_eq(name, "print_str")) { return "fr_print_str"; }
+    if (str_eq(name, "eprint")) { return "fr_eprint"; }
+    if (str_eq(name, "eprint_int")) { return "fr_io_eprint_int"; }
+    if (str_eq(name, "eprintln")) { return "fr_eprintln"; }
+    if (str_eq(name, "flush")) { return "fr_io_flush"; }
+    if (str_eq(name, "flush_err")) { return "fr_io_flush_err"; }
+    if (str_eq(name, "read_line")) { return "fr_io_read_line"; }
+    if (str_eq(name, "read_char")) { return "fr_io_read_char"; }
+    if (str_eq(name, "read_stdin")) { return "fr_io_read_stdin"; }
+    if (str_eq(name, "prompt")) { return "fr_io_prompt"; }
+    if (str_eq(name, "write_fd")) { return "fr_io_write_fd"; }
+    if (str_eq(name, "read_fd")) { return "fr_io_read_fd"; }
+    if (str_eq(name, "stdin_fd")) { return "fr_io_stdin_fd"; }
+    if (str_eq(name, "stdout_fd")) { return "fr_io_stdout_fd"; }
+    if (str_eq(name, "stderr_fd")) { return "fr_io_stderr_fd"; }
     if (str_eq(name, "os_argc")) { return "fr_os_argc"; }
     if (str_eq(name, "os_argv")) { return "fr_os_argv"; }
     if (str_eq(name, "os_exit")) { return "fr_os_exit"; }
@@ -154,6 +181,11 @@ fn emit_header(src: string): string {
     out = str_append_str(out, nl());
     out = str_append_str(out, "#include <string.h>");
     out = str_append_str(out, nl());
+    out = str_append_str(out, "#include ");
+    out = str_append_str(out, q());
+    out = str_append_str(out, "forge/os.h");
+    out = str_append_str(out, q());
+    out = str_append_str(out, nl());
     if (str_contains(src, "import strings")) {
         out = str_append_str(out, "#include ");
         out = str_append_str(out, q());
@@ -168,6 +200,13 @@ fn emit_header(src: string): string {
         out = str_append_str(out, q());
         out = str_append_str(out, nl());
     }
+    if (str_contains(src, "import io")) {
+        out = str_append_str(out, "#include ");
+        out = str_append_str(out, q());
+        out = str_append_str(out, "forge/io.h");
+        out = str_append_str(out, q());
+        out = str_append_str(out, nl());
+    }
     if (str_contains(src, "import os")) {
         out = str_append_str(out, "#include ");
         out = str_append_str(out, q());
@@ -177,6 +216,21 @@ fn emit_header(src: string): string {
     }
     out = str_append_str(out, nl());
     return out;
+}
+
+fn println_arg_is_string(arg: string): int {
+    if (str_len(arg) == 0) { return 0; }
+    if (str_char_at(arg, 0) == 34) { return 1; }
+    if (starts_at(arg, 0, "fs_read(") == 1) { return 1; }
+    if (starts_at(arg, 0, "fs_list_dir(") == 1) { return 1; }
+    if (starts_at(arg, 0, "read_line(") == 1) { return 1; }
+    if (starts_at(arg, 0, "read_stdin(") == 1) { return 1; }
+    if (starts_at(arg, 0, "prompt(") == 1) { return 1; }
+    if (starts_at(arg, 0, "read_fd(") == 1) { return 1; }
+    if (starts_at(arg, 0, "str_concat(") == 1) { return 1; }
+    if (starts_at(arg, 0, "str_") == 1) { return 1; }
+    if (starts_at(arg, 0, "os_argv(") == 1) { return 1; }
+    return 0;
 }
 
 fn emit_println_stmt(line: string): string {
@@ -192,10 +246,19 @@ fn emit_println_stmt(line: string): string {
         end = end - 1;
     }
     let arg: string = str_trim(str_sub(line, start, end - start));
+    if (str_len(arg) == 0) {
+        let empty_out: string = "    fr_println();";
+        empty_out = str_append_str(empty_out, nl());
+        return empty_out;
+    }
     let out: string = "    ({ ";
-    if (str_char_at(arg, 0) == 34) {
+    if (println_arg_is_string(arg) == 1) {
         out = str_append_str(out, "fr_print_str(");
-        out = str_append_str(out, arg);
+        if (str_char_at(arg, 0) == 34) {
+            out = str_append_str(out, arg);
+        } else {
+            out = str_append_str(out, compile_expr(arg));
+        }
         out = str_append_str(out, "); fr_println(); });");
     } else {
         out = str_append_str(out, "fr_print_int(");
