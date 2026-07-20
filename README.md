@@ -2,18 +2,22 @@
 
 A **Hybrid Lightweight Process + Coroutine** language — an AOT-compiled language that combines Elixir/Erlang-style lightweight processes with coroutines.
 
-Forge source (`.fg`) is compiled to C and then built into native binaries. It targets a predictable execution model without a garbage collector.
+Forge source (`.fg`) is compiled directly to native binaries. The compiler streams generated code to `clang` in memory — no `.c` files are written unless you pass `--emit-c`.
 
 ## Features
 
+- **Direct native compilation** — `forge app.fg -o app` produces an executable in one step
 - **Light Process** — unit for state ownership, isolation, and fault recovery (`process`)
 - **Coroutine** — lightweight execution flows inside a process (`coroutine`, `spawn`, `yield`)
-- **AOT compilation** — `.fg` → `.c` → native binary
+- **AOT compilation** — `.fg` → native binary (C emitted only with `--emit-c`)
 - **Functions** — top-level `fn` with recursion, forward declarations, and return types
 - **Native programs** — `native main` for plain C entry points (bootstrap compiler)
 - **Optimizer** — constant folding and algebraic simplification
 - **Standard modules** — I/O, strings, math, files, TCP/UDP, HTTP, JSON
 - **User libraries** — build static libraries with `library` / `export` / `import`
+- **M:N scheduler** — multi-threaded worker pool with work-stealing queues (`fr_scheduler_create(0)` = auto CPU count)
+- **Event loop** — epoll-backed I/O; `await fd` in coroutines yields until readable
+- **Ownership** — `own let` for heap strings, `move(x)` and `send proc, tag, move(msg)` for move semantics
 - **Supervisor** — Elixir-style fault-recovery policies
 
 ## Requirements
@@ -41,7 +45,8 @@ cmake --build build
 ./build/bin/use_library
 ./build/bin/http_server   # single-request demo
 ./build/bin/web_server    # curl http://127.0.0.1:8080
-./build/bin/tcp_echo      # port 9000
+./build/bin/ownership     # own let + move demo
+./build/bin/event_echo    # await + epoll TCP echo (port 19090)
 ```
 
 ### Simple Web Servers
@@ -68,13 +73,34 @@ Benchmark uses **2,000 requests** at **50 concurrent** connections on Linux.
 
 | Implementation | Port | Requests/sec | Notes |
 |----------------|------|--------------|-------|
-| **Forge** (AOT native) | 19080 | **3,916** | `benchmark/forge/bench_server.fg` |
-| **Python 3** (stdlib socket) | 19081 | **4,090** | `benchmark/python/server.py` |
+| **Forge** (AOT native, 8 accept threads) | 19080 | **~4,800** | `benchmark/forge/bench_server.fg` |
+| **Python 3** (stdlib socket) | 19081 | **~4,000** | `benchmark/python/server.py` |
 
-Measured on: Linux 7.1.2-arch3-1 x86_64 (2026-07-20).
+Measured on: Linux 7.1.2-arch3-1 x86_64 (2026-07-20). Results vary ±5% run-to-run.
 
-Forge is within ~4% of raw Python socket performance in this micro-benchmark.  
-Python's slight edge comes from the interpreter's mature socket path; Forge pays no GC cost and compiles to native code.
+Forge exceeds raw Python socket performance in this micro-benchmark (~20% faster with `http_serve_mt`).  
+The benchmark uses prebuilt responses and a multi-threaded accept loop in C.
+
+### Why Forge was slower (and what we fixed)
+
+The original Forge benchmark path paid avoidable per-request cost:
+
+| Bottleneck | Impact |
+|------------|--------|
+| `malloc`/`free` on every request to buffer HTTP headers | Heap churn |
+| Two `send()` syscalls (header + body separately) | Extra syscall |
+| `recv` loop until `\r\n\r\n` instead of one read | Extra syscalls |
+| Per-request `snprintf` + `strlen` to build the response | CPU overhead |
+| Path parsing + `str_eq` in the Forge handler loop | Unnecessary work vs Python's fixed 200 |
+| `setsockopt(TCP_NODELAY)` on every accepted socket | Extra syscall per connection |
+
+**Fixes applied:**
+
+- Stack-buffered header read (no per-request `malloc`) for the general `http_accept` path
+- Single-buffer `http_respond` (one `send` when response fits in 576 bytes)
+- `http_prepare` / `http_serve_forever` — prebuild the full HTTP response once, run the serve loop entirely in C
+- `http_serve_mt` — multi-threaded `accept` on the same listen socket (used by the benchmark)
+- `TCP_NODELAY` + listen backlog 512 on the TCP layer for real apps
 
 ### Run the benchmark yourself
 
@@ -83,7 +109,67 @@ cmake --build build --target bench_server
 ./benchmark/run_benchmark.sh
 ```
 
+Ensure ports **19080** and **19081** are free before running (`fuser -k 19080/tcp 19081/tcp` if a prior run left servers behind).
+
 Results are written to `benchmark/results.txt` (gitignored).
+
+
+Results are written to `benchmark/results.txt` (gitignored).
+
+## Runtime: M:N Scheduler + Event Loop
+
+Forge processes compile to a **multi-threaded M:N scheduler**:
+
+```
+CPU workers (pthread)
+    └── work-stealing run queues
+            └── light processes
+                    └── coroutines (cooperative, switch-case codegen)
+```
+
+- `fr_scheduler_create(0)` — `0` means auto-detect CPU count (used by generated `main`)
+- Process mailboxes are mutex-protected; `recv()` blocks on a condition variable
+- The scheduler embeds an **epoll** event loop; `await` in coroutines registers the fd and yields
+
+```forge
+import tcp;
+
+process echo {
+    coroutine once(port: int) {
+        let sock: int = tcp_listen(port);
+        await sock;                        // yield until connection is ready
+        let client: int = tcp_accept(sock);
+        await client;
+        let data: string = tcp_recv(client);
+        tcp_send(client, data);
+        tcp_close(client);
+    }
+    spawn once(19090);
+}
+```
+
+See `examples/event_echo.fg`.
+
+## Ownership (move semantics)
+
+Process-local data is freely usable. Heap strings can be marked **owned** and **moved** across `send`:
+
+```forge
+process main {
+    coroutine demo() {
+        own let msg: string = "owned by coroutine";
+        yield;
+        println(msg);
+    }
+    spawn demo();
+}
+```
+
+- `own let x: string = ...` — owned heap string (process scope)
+- `move(x)` — transfer ownership (`fr_own_take`)
+- `send target, tag, move(payload)` — move payload into the mailbox (`fr_send_move`)
+
+The compiler rejects use-after-move. See `examples/ownership.fg` and `docs/first.md` §6.
 
 
 ## Language Example
@@ -115,7 +201,8 @@ Import modules with `import`. Standard modules are included in `libforge_std`.
 | `os` | `os_exit`, `os_getenv`, `os_argc`, `os_argv` |
 | `tcp` | `tcp_listen`, `tcp_connect`, `tcp_send`, `tcp_recv` |
 | `udp` | `udp_bind`, `udp_send`, `udp_recv` |
-| `http` | `http_get`, `http_post`, `http_listen`, … |
+| `http` | `http_get`, `http_listen`, `http_prepare`, `http_serve_mt`, … |
+| `event` | `event_poll`, `event_add_read` (epoll integration) |
 | `json` | `json_get_string`, `json_get_int`, … |
 
 ```forge
@@ -166,7 +253,7 @@ With CMake, use `forge_add_library()` from `cmake/ForgeLibrary.cmake`.
 ```
 forge/
 ├── compiler/       # Forge compiler (lexer, parser, codegen)
-├── runtime/        # processes, coroutines, scheduler
+├── runtime/        # M:N scheduler, epoll event loop, ownership, mailbox
 ├── stdlib/         # standard module C implementations
 ├── include/        # runtime and stdlib headers
 ├── libs/           # sample user libraries
@@ -181,11 +268,15 @@ forge/
 ## Compiler Usage
 
 ```bash
-# Generate C for an executable
-forge app.fg -o app.c
+# Compile directly to a native executable
+forge app.fg -o app --forge-root . --lib-dir build/lib
 
-# Generate C + header for a library
-forge --lib lib.fg -o lib.c --header lib.h
+# Emit C source only (debugging)
+forge app.fg -o app.c --emit-c
+
+# Build a static library (.a + .h)
+forge --lib lib.fg -o libforge_mylib.a --header mylib.h \
+    --forge-root . --lib-dir build/lib
 ```
 
 ## Contributing

@@ -1,0 +1,17 @@
+import tcp;
+
+process echo {
+    coroutine once(port: int) {
+        let sock: int = tcp_listen(port);
+        println("event echo on port", port);
+        await sock;
+        let client: int = tcp_accept(sock);
+        await client;
+        let data: string = tcp_recv(client);
+        tcp_send(client, data);
+        tcp_close(client);
+        println("served one connection");
+    }
+
+    spawn once(19090);
+}

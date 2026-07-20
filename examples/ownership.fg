@@ -1,0 +1,9 @@
+process main {
+    coroutine demo() {
+        own let msg: string = "owned by coroutine";
+        yield;
+        println(msg);
+    }
+
+    spawn demo();
+}
