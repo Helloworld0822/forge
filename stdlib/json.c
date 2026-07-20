@@ -1,4 +1,4 @@
-#include "hylo/json.h"
+#include "forge/json.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,7 +15,7 @@ static const char *find_key_value(const char *json, const char *key, char quote)
     return p + 1;
 }
 
-const char *hy_json_get_string(const char *json, const char *key) {
+const char *fr_json_get_string(const char *json, const char *key) {
     static char buf[1024];
     const char *start = find_key_value(json, key, '"');
     if (!start) return "";
@@ -28,7 +28,7 @@ const char *hy_json_get_string(const char *json, const char *key) {
     return buf;
 }
 
-int64_t hy_json_get_int(const char *json, const char *key) {
+int64_t fr_json_get_int(const char *json, const char *key) {
     const char *start = find_key_value(json, key, '\0');
     if (!start) {
         start = find_key_value(json, key, '"');
@@ -38,14 +38,14 @@ int64_t hy_json_get_int(const char *json, const char *key) {
     return atoll(start);
 }
 
-char *hy_json_stringify_str(const char *key, const char *value) {
+char *fr_json_stringify_str(const char *key, const char *value) {
     char *out = (char *)malloc(1024);
     if (!out) return NULL;
     snprintf(out, 1024, "{\"%s\":\"%s\"}", key ? key : "", value ? value : "");
     return out;
 }
 
-char *hy_json_stringify_int(const char *key, int64_t value) {
+char *fr_json_stringify_int(const char *key, int64_t value) {
     char *out = (char *)malloc(256);
     if (!out) return NULL;
     snprintf(out, 256, "{\"%s\":%lld}", key ? key : "", (long long)value);

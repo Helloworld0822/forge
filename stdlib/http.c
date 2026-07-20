@@ -1,5 +1,5 @@
-#include "hylo/http.h"
-#include "hylo/tcp.h"
+#include "forge/http.h"
+#include "forge/tcp.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,14 +9,14 @@ typedef struct {
     char method[16];
     char path[512];
     char *body;
-} hy_http_req_t;
+} fr_http_req_t;
 
 typedef struct {
     int64_t listen_sock;
-} hy_http_server_t;
+} fr_http_server_t;
 
-static hy_http_req_t g_reqs[128];
-static hy_http_server_t g_servers[32];
+static fr_http_req_t g_reqs[128];
+static fr_http_server_t g_servers[32];
 
 static void parse_url(const char *url, char *host, size_t hcap, int64_t *port, char *path, size_t pcap) {
     const char *p = url;
@@ -47,7 +47,7 @@ static char *http_exchange(const char *method, const char *url, const char *body
     int64_t port = 80;
     parse_url(url, host, sizeof(host), &port, path, sizeof(path));
 
-    int64_t sock = hy_tcp_connect(host, port);
+    int64_t sock = fr_tcp_connect(host, port);
     if (sock < 0) return NULL;
 
     char header[1024];
@@ -60,11 +60,11 @@ static char *http_exchange(const char *method, const char *url, const char *body
                  "%s %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n",
                  method, path, host);
     }
-    hy_tcp_send(sock, header);
-    if (body && body[0]) hy_tcp_send(sock, body);
+    fr_tcp_send(sock, header);
+    if (body && body[0]) fr_tcp_send(sock, body);
 
-    char *resp = hy_tcp_recv(sock);
-    hy_tcp_close(sock);
+    char *resp = fr_tcp_recv(sock);
+    fr_tcp_close(sock);
     if (!resp) return NULL;
 
     char *body_start = strstr(resp, "\r\n\r\n");
@@ -77,22 +77,22 @@ static char *http_exchange(const char *method, const char *url, const char *body
     return out;
 }
 
-char *hy_http_get(const char *url) {
+char *fr_http_get(const char *url) {
     return http_exchange("GET", url, NULL);
 }
 
-char *hy_http_post(const char *url, const char *body) {
+char *fr_http_post(const char *url, const char *body) {
     return http_exchange("POST", url, body ? body : "");
 }
 
-int64_t hy_http_listen(int64_t port) {
-    int64_t sock = hy_tcp_listen(port);
+int64_t fr_http_listen(int64_t port) {
+    int64_t sock = fr_tcp_listen(port);
     if (sock < 0 || sock >= 32) return -1;
     g_servers[sock].listen_sock = sock;
     return sock;
 }
 
-static void parse_http_request(const char *raw, hy_http_req_t *req) {
+static void parse_http_request(const char *raw, fr_http_req_t *req) {
     req->method[0] = req->path[0] = '\0';
     if (req->body) { free(req->body); req->body = NULL; }
 
@@ -113,32 +113,32 @@ static void parse_http_request(const char *raw, hy_http_req_t *req) {
     }
 }
 
-int64_t hy_http_accept(int64_t server) {
-    int64_t client = hy_tcp_accept(server);
+int64_t fr_http_accept(int64_t server) {
+    int64_t client = fr_tcp_accept(server);
     if (client < 0 || client >= 128) return -1;
-    char *raw = hy_tcp_recv(client);
+    char *raw = fr_tcp_recv(client);
     g_reqs[client].sock = client;
     parse_http_request(raw ? raw : "", &g_reqs[client]);
     free(raw);
     return client;
 }
 
-const char *hy_http_req_method(int64_t req) {
+const char *fr_http_req_method(int64_t req) {
     if (req < 0 || req >= 128) return "";
     return g_reqs[req].method;
 }
 
-const char *hy_http_req_path(int64_t req) {
+const char *fr_http_req_path(int64_t req) {
     if (req < 0 || req >= 128) return "";
     return g_reqs[req].path;
 }
 
-const char *hy_http_req_body(int64_t req) {
+const char *fr_http_req_body(int64_t req) {
     if (req < 0 || req >= 128 || !g_reqs[req].body) return "";
     return g_reqs[req].body;
 }
 
-void hy_http_respond(int64_t req, int64_t status, const char *body) {
+void fr_http_respond(int64_t req, int64_t status, const char *body) {
     if (req < 0 || req >= 128) return;
     const char *text = "OK";
     if (status == 404) text = "Not Found";
@@ -147,17 +147,17 @@ void hy_http_respond(int64_t req, int64_t status, const char *body) {
     snprintf(header, sizeof(header),
              "HTTP/1.1 %lld %s\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n",
              (long long)status, text, body ? strlen(body) : 0);
-    hy_tcp_send(g_reqs[req].sock, header);
-    if (body && body[0]) hy_tcp_send(g_reqs[req].sock, body);
+    fr_tcp_send(g_reqs[req].sock, header);
+    if (body && body[0]) fr_tcp_send(g_reqs[req].sock, body);
 }
 
-void hy_http_close(int64_t req) {
+void fr_http_close(int64_t req) {
     if (req < 0 || req >= 128) return;
     if (g_reqs[req].body) { free(g_reqs[req].body); g_reqs[req].body = NULL; }
-    hy_tcp_close(g_reqs[req].sock);
+    fr_tcp_close(g_reqs[req].sock);
     g_reqs[req].sock = -1;
 }
 
-void hy_http_server_close(int64_t server) {
-    hy_tcp_close(server);
+void fr_http_server_close(int64_t server) {
+    fr_tcp_close(server);
 }

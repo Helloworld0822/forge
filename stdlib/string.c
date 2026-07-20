@@ -1,13 +1,13 @@
-#include "hylo/string.h"
+#include "forge/string.h"
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
-int64_t hy_str_len(const char *s) {
+int64_t fr_str_len(const char *s) {
     return s ? (int64_t)strlen(s) : 0;
 }
 
-char *hy_str_concat(const char *a, const char *b) {
+char *fr_str_concat(const char *a, const char *b) {
     size_t la = a ? strlen(a) : 0;
     size_t lb = b ? strlen(b) : 0;
     char *out = (char *)malloc(la + lb + 1);
@@ -18,12 +18,12 @@ char *hy_str_concat(const char *a, const char *b) {
     return out;
 }
 
-int hy_str_eq(const char *a, const char *b) {
+int fr_str_eq(const char *a, const char *b) {
     if (!a || !b) return a == b;
     return strcmp(a, b) == 0;
 }
 
-char *hy_str_sub(const char *s, int64_t start, int64_t len) {
+char *fr_str_sub(const char *s, int64_t start, int64_t len) {
     if (!s || start < 0 || len < 0) return NULL;
     size_t slen = strlen(s);
     if ((size_t)start >= slen) {
@@ -39,12 +39,12 @@ char *hy_str_sub(const char *s, int64_t start, int64_t len) {
     return out;
 }
 
-int hy_str_contains(const char *haystack, const char *needle) {
+int fr_str_contains(const char *haystack, const char *needle) {
     if (!haystack || !needle) return 0;
     return strstr(haystack, needle) != NULL;
 }
 
-char *hy_str_trim(const char *s) {
+char *fr_str_trim(const char *s) {
     if (!s) return NULL;
     while (*s && isspace((unsigned char)*s)) s++;
     if (!*s) {

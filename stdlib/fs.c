@@ -1,9 +1,9 @@
-#include "hylo/fs.h"
+#include "forge/fs.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-char *hy_fs_read(const char *path) {
+char *fr_fs_read(const char *path) {
     if (!path) return NULL;
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
@@ -19,7 +19,7 @@ char *hy_fs_read(const char *path) {
     return buf;
 }
 
-int hy_fs_write(const char *path, const char *content) {
+int fr_fs_write(const char *path, const char *content) {
     if (!path) return 0;
     FILE *f = fopen(path, "wb");
     if (!f) return 0;
@@ -31,7 +31,7 @@ int hy_fs_write(const char *path, const char *content) {
     return 1;
 }
 
-int hy_fs_exists(const char *path) {
+int fr_fs_exists(const char *path) {
     if (!path) return 0;
     FILE *f = fopen(path, "rb");
     if (!f) return 0;
@@ -39,7 +39,7 @@ int hy_fs_exists(const char *path) {
     return 1;
 }
 
-int hy_fs_remove(const char *path) {
+int fr_fs_remove(const char *path) {
     if (!path) return 0;
     return remove(path) == 0;
 }

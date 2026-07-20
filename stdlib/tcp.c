@@ -1,4 +1,4 @@
-#include "hylo/tcp.h"
+#include "forge/tcp.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -8,14 +8,14 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-void hy_net_init(void) {}
+void fr_net_init(void) {}
 
 static int set_reuseaddr(int fd) {
     int yes = 1;
     return setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
 }
 
-int64_t hy_tcp_listen(int64_t port) {
+int64_t fr_tcp_listen(int64_t port) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return -1;
     set_reuseaddr(fd);
@@ -29,13 +29,13 @@ int64_t hy_tcp_listen(int64_t port) {
     return fd;
 }
 
-int64_t hy_tcp_accept(int64_t sock) {
+int64_t fr_tcp_accept(int64_t sock) {
     if (sock < 0) return -1;
     int client = accept((int)sock, NULL, NULL);
     return client;
 }
 
-int64_t hy_tcp_connect(const char *host, int64_t port) {
+int64_t fr_tcp_connect(const char *host, int64_t port) {
     if (!host) return -1;
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) return -1;
@@ -54,7 +54,7 @@ int64_t hy_tcp_connect(const char *host, int64_t port) {
     return fd;
 }
 
-int64_t hy_tcp_send(int64_t sock, const char *data) {
+int64_t fr_tcp_send(int64_t sock, const char *data) {
     if (sock < 0 || !data) return -1;
     size_t total = strlen(data);
     size_t sent = 0;
@@ -66,7 +66,7 @@ int64_t hy_tcp_send(int64_t sock, const char *data) {
     return (int64_t)sent;
 }
 
-char *hy_tcp_recv(int64_t sock) {
+char *fr_tcp_recv(int64_t sock) {
     if (sock < 0) return NULL;
     size_t cap = 4096, len = 0;
     char *buf = (char *)malloc(cap);
@@ -87,6 +87,6 @@ char *hy_tcp_recv(int64_t sock) {
     return buf;
 }
 
-void hy_tcp_close(int64_t sock) {
+void fr_tcp_close(int64_t sock) {
     if (sock >= 0) close((int)sock);
 }

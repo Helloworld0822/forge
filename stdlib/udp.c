@@ -1,4 +1,4 @@
-#include "hylo/udp.h"
+#include "forge/udp.h"
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <stdio.h>
@@ -9,15 +9,15 @@
 
 typedef struct {
     char peer[64];
-} hy_udp_state_t;
+} fr_udp_state_t;
 
-static hy_udp_state_t *udp_state(int64_t sock) {
-    static hy_udp_state_t states[256];
+static fr_udp_state_t *udp_state(int64_t sock) {
+    static fr_udp_state_t states[256];
     if (sock < 0 || sock >= 256) return &states[0];
     return &states[sock];
 }
 
-int64_t hy_udp_bind(int64_t port) {
+int64_t fr_udp_bind(int64_t port) {
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) return -1;
     struct sockaddr_in addr;
@@ -33,7 +33,7 @@ int64_t hy_udp_bind(int64_t port) {
     return fd;
 }
 
-int64_t hy_udp_send(int64_t sock, const char *host, int64_t port, const char *data) {
+int64_t fr_udp_send(int64_t sock, const char *host, int64_t port, const char *data) {
     if (sock < 0 || !host || !data) return -1;
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -45,7 +45,7 @@ int64_t hy_udp_send(int64_t sock, const char *host, int64_t port, const char *da
     return n < 0 ? -1 : (int64_t)n;
 }
 
-char *hy_udp_recv(int64_t sock) {
+char *fr_udp_recv(int64_t sock) {
     if (sock < 0) return NULL;
     char buf[65536];
     struct sockaddr_in addr;
@@ -63,10 +63,10 @@ char *hy_udp_recv(int64_t sock) {
     return out;
 }
 
-const char *hy_udp_peer(int64_t sock) {
+const char *fr_udp_peer(int64_t sock) {
     return udp_state(sock)->peer;
 }
 
-void hy_udp_close(int64_t sock) {
+void fr_udp_close(int64_t sock) {
     if (sock >= 0) close((int)sock);
 }
