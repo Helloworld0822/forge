@@ -1,13 +1,10 @@
 #include "forge/http.h"
 #include "forge/tcp.h"
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <pthread.h>
+#include "forge/platform.h"
+#include "forge/thread.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 typedef struct {
     int64_t sock;
@@ -29,7 +26,7 @@ static fr_http_server_t g_servers[32];
 static int recv_until_headers(int fd, char *buf, size_t cap) {
     size_t len = 0;
     while (len + 1 < cap) {
-        ssize_t n = recv(fd, buf + len, cap - len - 1, 0);
+        ssize_t n = fr_sock_recv(fd, buf + len, cap - len - 1);
         if (n < 0) return -1;
         if (n == 0) break;
         len += (size_t)n;
@@ -43,14 +40,8 @@ static int recv_until_headers(int fd, char *buf, size_t cap) {
 }
 
 static int tcp_send_all(int fd, const void *data, size_t len) {
-    const char *p = (const char *)data;
-    size_t sent = 0;
-    while (sent < len) {
-        ssize_t n = send(fd, p + sent, len - sent, MSG_NOSIGNAL);
-        if (n <= 0) return -1;
-        sent += (size_t)n;
-    }
-    return 0;
+    ssize_t n = fr_sock_send(fd, data, len);
+    return n < 0 || (size_t)n != len ? -1 : 0;
 }
 
 static void parse_url(const char *url, char *host, size_t hcap, int64_t *port, char *path, size_t pcap) {
@@ -246,9 +237,9 @@ void fr_http_serve_prepared(int64_t server) {
     if (client < 0) return;
 
     char discard[4096];
-    recv(client, discard, sizeof(discard), 0);
+    fr_sock_recv(client, discard, sizeof(discard));
     tcp_send_all(client, srv->cached_resp, srv->cached_len);
-    close(client);
+    fr_sock_close(client);
 }
 
 void fr_http_serve_forever(int64_t server) {
@@ -259,12 +250,12 @@ void fr_http_serve_forever(int64_t server) {
     if (!resp || rlen == 0) return;
 
     while (1) {
-        int client = (int)accept((int)server, NULL, NULL);
+        int client = (int)fr_tcp_accept(server);
         if (client < 0) continue;
         char discard[4096];
-        recv(client, discard, sizeof(discard), 0);
-        send(client, resp, rlen, MSG_NOSIGNAL);
-        close(client);
+        fr_sock_recv(client, discard, sizeof(discard));
+        fr_sock_send(client, resp, rlen);
+        fr_sock_close(client);
     }
 }
 
@@ -287,11 +278,11 @@ static void *http_mt_worker(void *arg) {
     http_mt_ctx_t *ctx = (http_mt_ctx_t *)arg;
     char discard[512];
     while (1) {
-        int client = (int)accept(ctx->listen_fd, NULL, NULL);
+        int client = (int)fr_tcp_accept(ctx->listen_fd);
         if (client < 0) continue;
-        recv(client, discard, sizeof(discard), MSG_DONTWAIT);
-        send(client, ctx->resp, ctx->resp_len, MSG_NOSIGNAL);
-        close(client);
+        fr_sock_recv(client, discard, sizeof(discard));
+        fr_sock_send(client, ctx->resp, ctx->resp_len);
+        fr_sock_close(client);
     }
     return NULL;
 }
@@ -308,9 +299,9 @@ void fr_http_serve_mt(int64_t server, int64_t threads) {
         ctxs[i].listen_fd = listen_fd;
         ctxs[i].resp = srv->cached_resp;
         ctxs[i].resp_len = srv->cached_len;
-        pthread_t tid;
-        pthread_create(&tid, NULL, http_mt_worker, &ctxs[i]);
-        pthread_detach(tid);
+        fr_thread_t *tid = NULL;
+        fr_thread_start(&tid, http_mt_worker, &ctxs[i]);
+        fr_thread_detach(tid);
     }
-    while (1) pause();
+    fr_platform_sleep_forever();
 }

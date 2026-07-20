@@ -18,5 +18,6 @@ void fr_event_loop_set_cb(fr_event_loop_t *loop, fr_event_cb_t cb);
 
 #define FR_EVENT_READ  0x001u
 #define FR_EVENT_WRITE 0x002u
+#define FR_EVENT_ONESHOT 0x80000000u
 
 #endif

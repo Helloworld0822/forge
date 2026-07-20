@@ -1,7 +1,7 @@
 #ifndef FORGE_WORK_QUEUE_H
 #define FORGE_WORK_QUEUE_H
 
-#include <pthread.h>
+#include "forge/thread.h"
 #include <stddef.h>
 
 typedef struct fr_coro fr_coro_t;
@@ -12,7 +12,7 @@ typedef struct fr_run_node {
 } fr_run_node_t;
 
 typedef struct {
-    pthread_mutex_t lock;
+    fr_mutex_t *lock;
     fr_run_node_t *head;
     fr_run_node_t *tail;
     size_t count;

@@ -16,7 +16,7 @@ Forge source (`.fg`) is compiled directly to native binaries. The compiler strea
 - **Standard modules** — I/O, strings, math, files, TCP/UDP, HTTP, JSON
 - **User libraries** — build static libraries with `library` / `export` / `import`
 - **M:N scheduler** — multi-threaded worker pool with work-stealing queues (`fr_scheduler_create(0)` = auto CPU count)
-- **Event loop** — epoll-backed I/O; `await fd` in coroutines yields until readable
+- **Event loop** — epoll (Linux), kqueue (macOS), or select (Windows); `await fd` in coroutines yields until readable
 - **Ownership** — `own let` for heap strings, `move(x)` and `send proc, tag, move(msg)` for move semantics
 - **Supervisor** — Elixir-style fault-recovery policies
 
@@ -24,7 +24,11 @@ Forge source (`.fg`) is compiled directly to native binaries. The compiler strea
 
 - GCC or Clang (C11)
 - CMake 3.16+
-- Linux (networking modules use POSIX sockets)
+- **Linux** — epoll event loop (recommended for production I/O)
+- **macOS** — kqueue event loop
+- **Windows** — MSVC or MinGW; select-based event loop; Winsock networking
+
+Supported platforms: Linux, macOS, Windows 10+.
 
 ## Build
 
@@ -32,6 +36,20 @@ Forge source (`.fg`) is compiled directly to native binaries. The compiler strea
 git clone https://github.com/Helloworld0822/forge.git
 cd forge
 
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+### Windows (MSYS2 / MinGW)
+
+```powershell
+cmake -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+### macOS
+
+```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```

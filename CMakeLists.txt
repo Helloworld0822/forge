@@ -9,7 +9,11 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-add_compile_options(-Wall -Wextra)
+if(MSVC)
+    add_compile_options(/W4)
+else()
+    add_compile_options(-Wall -Wextra)
+endif()
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
@@ -28,7 +32,9 @@ add_library(forge_std STATIC
     stdlib/json.c
 )
 target_include_directories(forge_std PUBLIC include)
-target_link_libraries(forge_std PUBLIC pthread)
+if(NOT WIN32)
+    target_link_libraries(forge_std PUBLIC pthread)
+endif()
 
 add_library(forge_runtime STATIC
     runtime/runtime.c
@@ -36,8 +42,14 @@ add_library(forge_runtime STATIC
     runtime/work_queue.c
     runtime/event_loop.c
     runtime/ownership.c
+    runtime/platform.c
+    runtime/thread.c
 )
-target_link_libraries(forge_runtime PUBLIC forge_std pthread)
+if(WIN32)
+    target_link_libraries(forge_runtime PUBLIC forge_std ws2_32)
+else()
+    target_link_libraries(forge_runtime PUBLIC forge_std pthread)
+endif()
 target_include_directories(forge_runtime PUBLIC include runtime)
 
 add_executable(forge
@@ -51,6 +63,7 @@ add_executable(forge
     compiler/driver.c
 )
 target_include_directories(forge PRIVATE include compiler)
+target_sources(forge PRIVATE runtime/platform.c)
 
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
 

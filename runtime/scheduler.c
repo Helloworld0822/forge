@@ -1,12 +1,10 @@
 #include "forge_runtime.h"
 #include "work_queue.h"
 #include "forge/event.h"
-#include <pthread.h>
+#include "forge/platform.h"
+#include "forge/thread.h"
 #include <stdlib.h>
 #include <string.h>
-#include <sys/epoll.h>
-#include <sched.h>
-#include <unistd.h>
 
 static char *fr_strdup(const char *s) {
     size_t n = strlen(s);
@@ -54,8 +52,8 @@ struct fr_process {
     fr_process_t **children;
     size_t child_count;
     int worker_id;
-    pthread_mutex_t lock;
-    pthread_cond_t msg_cond;
+    fr_mutex_t *lock;
+    fr_cond_t *msg_cond;
     struct fr_process *next;
 };
 
@@ -64,11 +62,11 @@ struct fr_scheduler {
     int worker_count;
     int running;
     int done;
-    pthread_t *workers;
+    fr_thread_t **workers;
     fr_run_queue_t *worker_queues;
     fr_event_loop_t *event_loop;
-    pthread_mutex_t lock;
-    pthread_cond_t idle_cond;
+    fr_mutex_t *lock;
+    fr_cond_t *idle_cond;
 };
 
 static _Thread_local fr_coro_t *tls_current_coro = NULL;
@@ -79,7 +77,7 @@ fr_coro_t *fr_coro_current(void) {
 
 static int default_worker_count(int n) {
     if (n > 0) return n;
-    long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+    long cpus = fr_platform_cpu_count();
     return cpus > 0 ? (int)cpus : 4;
 }
 
@@ -105,7 +103,7 @@ static void enqueue_coro(fr_scheduler_t *sched, fr_coro_t *coro) {
     coro->on_queue = 1;
     int wid = coro->proc->worker_id % sched->worker_count;
     fr_run_queue_push(&sched->worker_queues[wid], coro);
-    pthread_cond_broadcast(&sched->idle_cond);
+    fr_cond_broadcast(sched->idle_cond);
 }
 
 static void event_resume_cb(fr_event_loop_t *loop, int fd, uint32_t events, void *userdata) {
@@ -150,13 +148,13 @@ static int sched_any_active(fr_scheduler_t *sched) {
 
 static void scan_enqueue_runnable(fr_scheduler_t *sched) {
     for (fr_process_t *p = sched->processes; p; p = p->next) {
-        pthread_mutex_lock(&p->lock);
+        fr_mutex_lock(p->lock);
         for (fr_coro_t *c = p->coros; c; c = c->next) {
             if (c->status == FR_CORO_RUNNING) {
                 enqueue_coro(sched, c);
             }
         }
-        pthread_mutex_unlock(&p->lock);
+        fr_mutex_unlock(p->lock);
     }
 }
 
@@ -185,7 +183,7 @@ static void *worker_main(void *arg) {
                 sched->done = 1;
                 break;
             }
-            sched_yield();
+            fr_thread_yield();
             continue;
         }
 
@@ -204,10 +202,10 @@ fr_scheduler_t *fr_scheduler_create(int worker_count) {
     s->worker_count = default_worker_count(worker_count);
     s->event_loop = fr_event_loop_create();
     if (s->event_loop) fr_event_loop_set_cb(s->event_loop, event_resume_cb);
-    pthread_mutex_init(&s->lock, NULL);
-    pthread_cond_init(&s->idle_cond, NULL);
+    s->lock = fr_mutex_create();
+    s->idle_cond = fr_cond_create();
     s->worker_queues = (fr_run_queue_t *)calloc((size_t)s->worker_count, sizeof(fr_run_queue_t));
-    s->workers = (pthread_t *)calloc((size_t)s->worker_count, sizeof(pthread_t));
+    s->workers = (fr_thread_t **)calloc((size_t)s->worker_count, sizeof(fr_thread_t *));
     if (!s->worker_queues || !s->workers) {
         fr_scheduler_destroy(s);
         return NULL;
@@ -221,10 +219,10 @@ fr_scheduler_t *fr_scheduler_create(int worker_count) {
 void fr_scheduler_destroy(fr_scheduler_t *sched) {
     if (!sched) return;
     sched->running = 0;
-    pthread_cond_broadcast(&sched->idle_cond);
+    fr_cond_broadcast(sched->idle_cond);
     if (sched->workers) {
         for (int i = 0; i < sched->worker_count; i++) {
-            if (sched->workers[i]) pthread_join(sched->workers[i], NULL);
+            if (sched->workers[i]) fr_thread_join(sched->workers[i]);
         }
     }
     if (sched->worker_queues) {
@@ -239,8 +237,8 @@ void fr_scheduler_destroy(fr_scheduler_t *sched) {
         p = next;
     }
     fr_event_loop_destroy(sched->event_loop);
-    pthread_mutex_destroy(&sched->lock);
-    pthread_cond_destroy(&sched->idle_cond);
+    fr_mutex_destroy(sched->lock);
+    fr_cond_destroy(sched->idle_cond);
     free(sched->worker_queues);
     free(sched->workers);
     free(sched);
@@ -250,10 +248,10 @@ void fr_scheduler_add_process(fr_scheduler_t *sched, fr_process_t *proc) {
     static int next_worker = 0;
     proc->sched = sched;
     proc->worker_id = next_worker++ % sched->worker_count;
-    pthread_mutex_lock(&sched->lock);
+    fr_mutex_lock(sched->lock);
     proc->next = sched->processes;
     sched->processes = proc;
-    pthread_mutex_unlock(&sched->lock);
+    fr_mutex_unlock(sched->lock);
 }
 
 fr_event_loop_t *fr_scheduler_event_loop(fr_scheduler_t *sched) {
@@ -273,19 +271,19 @@ void fr_scheduler_run(fr_scheduler_t *sched) {
         fr_worker_arg_t *wa = (fr_worker_arg_t *)malloc(sizeof(fr_worker_arg_t));
         wa->sched = sched;
         wa->wid = i;
-        pthread_create(&sched->workers[i], NULL, worker_main, wa);
+        fr_thread_start(&sched->workers[i], worker_main, wa);
     }
-    pthread_mutex_lock(&sched->lock);
+    fr_mutex_lock(sched->lock);
     while (!sched->done) {
         fr_event_loop_poll(sched->event_loop, 1);
         if (!sched_any_active(sched)) sched->done = 1;
     }
-    pthread_mutex_unlock(&sched->lock);
+    fr_mutex_unlock(sched->lock);
     sched->running = 0;
-    pthread_cond_broadcast(&sched->idle_cond);
+    fr_cond_broadcast(sched->idle_cond);
     for (int i = 0; i < sched->worker_count; i++) {
-        pthread_join(sched->workers[i], NULL);
-        sched->workers[i] = 0;
+        if (sched->workers[i]) fr_thread_join(sched->workers[i]);
+        sched->workers[i] = NULL;
     }
 }
 
@@ -294,8 +292,8 @@ fr_process_t *fr_process_create(const char *name) {
     if (!p) return NULL;
     p->name = fr_strdup(name ? name : "process");
     p->next_coro_id = 1;
-    pthread_mutex_init(&p->lock, NULL);
-    pthread_cond_init(&p->msg_cond, NULL);
+    p->lock = fr_mutex_create();
+    p->msg_cond = fr_cond_create();
     return p;
 }
 
@@ -312,8 +310,8 @@ void fr_process_destroy(fr_process_t *proc) {
         fr_msg_t *m = &proc->mailbox.msgs[(proc->mailbox.head + i) % MAILBOX_CAP];
         if (m->owns_payload && m->payload) free(m->payload);
     }
-    pthread_mutex_destroy(&proc->lock);
-    pthread_cond_destroy(&proc->msg_cond);
+    fr_mutex_destroy(proc->lock);
+    fr_cond_destroy(proc->msg_cond);
     free(proc->children);
     free(proc->name);
     free(proc);
@@ -379,28 +377,28 @@ void fr_coro_set_step(fr_coro_t *coro, int step) {
 void fr_send(fr_process_t *dst, int tag, int64_t value, void *payload, size_t payload_size) {
     if (!dst) return;
     fr_msg_t msg = { tag, value, payload, payload_size, payload ? 1 : 0, NULL };
-    pthread_mutex_lock(&dst->lock);
+    fr_mutex_lock(dst->lock);
     mailbox_push(&dst->mailbox, msg);
-    pthread_cond_broadcast(&dst->msg_cond);
-    pthread_mutex_unlock(&dst->lock);
-    if (dst->sched) pthread_cond_broadcast(&dst->sched->idle_cond);
+    fr_cond_broadcast(dst->msg_cond);
+    fr_mutex_unlock(dst->lock);
+    if (dst->sched) fr_cond_broadcast(dst->sched->idle_cond);
 }
 
 int fr_try_recv(fr_process_t *self, fr_msg_t *out) {
     if (!self || !out) return 0;
-    pthread_mutex_lock(&self->lock);
+    fr_mutex_lock(self->lock);
     int ok = mailbox_pop(&self->mailbox, out);
-    pthread_mutex_unlock(&self->lock);
+    fr_mutex_unlock(self->lock);
     return ok;
 }
 
 int fr_recv(fr_process_t *self, fr_msg_t *out) {
     if (!self || !out) return 0;
-    pthread_mutex_lock(&self->lock);
+    fr_mutex_lock(self->lock);
     while (!mailbox_pop(&self->mailbox, out)) {
-        pthread_cond_wait(&self->msg_cond, &self->lock);
+        fr_cond_wait(self->msg_cond, self->lock);
     }
-    pthread_mutex_unlock(&self->lock);
+    fr_mutex_unlock(self->lock);
     return 1;
 }
 
@@ -424,7 +422,7 @@ int64_t fr_await_fd(fr_coro_t *coro, int64_t fd, uint32_t events) {
     coro->await_events = events;
     coro->await_ready = 0;
     coro->status = FR_CORO_WAITING_IO;
-    fr_event_loop_add(coro->proc->sched->event_loop, (int)fd, events | EPOLLONESHOT, coro);
+    fr_event_loop_add(coro->proc->sched->event_loop, (int)fd, events | FR_EVENT_ONESHOT, coro);
     return 0;
 }
 
@@ -449,6 +447,6 @@ int fr_event_poll(fr_scheduler_t *sched, int timeout_ms) {
 
 int64_t fr_event_add_read(fr_scheduler_t *sched, int64_t fd) {
     if (!sched || !sched->event_loop || fd < 0) return -1;
-    if (fr_event_loop_add(sched->event_loop, (int)fd, EPOLLIN | EPOLLET, NULL) < 0) return -1;
+    if (fr_event_loop_add(sched->event_loop, (int)fd, FR_EVENT_READ, NULL) < 0) return -1;
     return fd;
 }

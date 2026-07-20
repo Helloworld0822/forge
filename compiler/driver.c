@@ -1,14 +1,21 @@
 #define _GNU_SOURCE
 #include "driver.h"
 #include "codegen.h"
+#include "forge/platform.h"
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+
+#if !defined(FORGE_OS_WINDOWS)
 #include <sys/wait.h>
 #include <unistd.h>
+#else
+#include <process.h>
+#define PATH_MAX MAX_PATH
+#endif
 
 typedef struct {
     char **items;
@@ -61,6 +68,10 @@ static void argv_add_includes(Argv *a, const ForgeDriverConfig *cfg) {
 static int exec_argv(Argv *a) {
     a->items = (char **)realloc(a->items, (a->count + 1) * sizeof(char *));
     a->items[a->count] = NULL;
+#if defined(FORGE_OS_WINDOWS)
+    int rc = _spawnvp(_P_WAIT, a->items[0], a->items);
+    return rc < 0 ? 1 : rc;
+#else
     pid_t pid = fork();
     if (pid < 0) {
         fprintf(stderr, "forge: fork failed: %s\n", strerror(errno));
@@ -80,61 +91,39 @@ static int exec_argv(Argv *a) {
         return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
     }
     return 0;
+#endif
 }
 
 static int compile_c_source(Program *prog, const char *obj_path, const ForgeDriverConfig *cfg,
                             void (*emit)(Program *, FILE *, const char *)) {
-    int pipefd[2];
-    if (pipe(pipefd) < 0) {
-        fprintf(stderr, "forge: pipe failed: %s\n", strerror(errno));
+    char cpath[PATH_MAX];
+    if (fr_make_temp_path(cpath, sizeof(cpath), "forge", ".c") != 0) {
+        fprintf(stderr, "forge: cannot create temp file\n");
         return 1;
     }
-
-    pid_t pid = fork();
-    if (pid < 0) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        return 1;
-    }
-
-    if (pid == 0) {
-        close(pipefd[1]);
-        if (dup2(pipefd[0], STDIN_FILENO) < 0) _exit(127);
-        close(pipefd[0]);
-
-        Argv args;
-        argv_init(&args);
-        argv_push(&args, (char *)cfg->cc);
-        argv_push(&args, "-x");
-        argv_push(&args, "c");
-        argv_push(&args, "-");
-        argv_push(&args, "-std=c11");
-        argv_add_opt(&args, cfg->opt_level > 0 ? cfg->opt_level : 3);
-        argv_add_includes(&args, cfg);
-        argv_push(&args, "-c");
-        argv_push(&args, "-o");
-        argv_push(&args, (char *)obj_path);
-        args.items = (char **)realloc(args.items, (args.count + 1) * sizeof(char *));
-        args.items[args.count] = NULL;
-        execvp(args.items[0], args.items);
-        _exit(127);
-    }
-
-    close(pipefd[0]);
-    FILE *out = fdopen(pipefd[1], "w");
+    FILE *out = fopen(cpath, "w");
     if (!out) {
-        close(pipefd[1]);
+        remove(cpath);
         return 1;
     }
     emit(prog, out, "forge_runtime.h");
     fclose(out);
 
-    int status = 0;
-    if (waitpid(pid, &status, 0) < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        fprintf(stderr, "forge: native compilation failed\n");
-        return 1;
-    }
-    return 0;
+    Argv args;
+    argv_init(&args);
+    argv_push(&args, (char *)cfg->cc);
+    argv_push(&args, "-std=c11");
+    argv_add_opt(&args, cfg->opt_level > 0 ? cfg->opt_level : 3);
+    argv_add_includes(&args, cfg);
+    argv_push(&args, "-c");
+    argv_push(&args, cpath);
+    argv_push(&args, "-o");
+    argv_push(&args, (char *)obj_path);
+    int rc = exec_argv(&args);
+    argv_free(&args);
+    if (!cfg->keep_intermediate) remove(cpath);
+    if (rc != 0) fprintf(stderr, "forge: native compilation failed\n");
+    return rc;
 }
 
 static void emit_program(Program *prog, FILE *out, const char *runtime_include) {
@@ -183,6 +172,20 @@ void forge_driver_detect_paths(ForgeDriverConfig *cfg, const char *argv0) {
     if (root && root[0]) {
         cfg->forge_root = root;
     } else if (argv0 && argv0[0]) {
+#if defined(FORGE_OS_WINDOWS)
+        char resolved[PATH_MAX];
+        DWORD n = GetModuleFileNameA(NULL, resolved, (DWORD)sizeof(resolved));
+        if (n > 0 && n < sizeof(resolved)) {
+            char *slash = strstr(resolved, "\\build\\bin\\");
+            if (!slash) slash = strstr(resolved, "/build/bin/");
+            if (slash) {
+                *slash = '\0';
+                snprintf(rootbuf, sizeof(rootbuf), "%s", resolved);
+                fr_path_normalize(rootbuf);
+                cfg->forge_root = rootbuf;
+            }
+        }
+#else
         char resolved[PATH_MAX];
         if (realpath(argv0, resolved)) {
             char *slash = strstr(resolved, "/build/bin/");
@@ -192,16 +195,17 @@ void forge_driver_detect_paths(ForgeDriverConfig *cfg, const char *argv0) {
                 cfg->forge_root = rootbuf;
             }
         }
+#endif
     }
     if (!cfg->forge_root) cfg->forge_root = ".";
 
     if (!cfg->lib_dir) {
         snprintf(libbuf, sizeof(libbuf), "%s/build/lib", cfg->forge_root);
-        if (access(libbuf, R_OK) == 0) cfg->lib_dir = libbuf;
+        if (fr_path_exists(libbuf)) cfg->lib_dir = libbuf;
     }
     if (!cfg->include_dir) {
         snprintf(incbuf, sizeof(incbuf), "%s/include", cfg->forge_root);
-        if (access(incbuf, R_OK) == 0) cfg->include_dir = incbuf;
+        if (fr_path_exists(incbuf)) cfg->include_dir = incbuf;
     }
 }
 
@@ -235,17 +239,15 @@ int forge_driver_compile_program(Program *prog, const char *output_path, const F
         return 1;
     }
 
-    char obj_template[] = "/tmp/forge-XXXXXX.o";
-    int obj_fd = mkstemps(obj_template, 2);
-    if (obj_fd < 0) return 1;
-    close(obj_fd);
+    char obj_path[PATH_MAX];
+    if (fr_make_temp_path(obj_path, sizeof(obj_path), "forge", ".o") != 0) return 1;
 
-    if (compile_c_source(prog, obj_template, cfg, emit_program) != 0) {
-        unlink(obj_template);
+    if (compile_c_source(prog, obj_path, cfg, emit_program) != 0) {
+        remove(obj_path);
         return 1;
     }
-    int rc = link_object(obj_template, output_path, cfg);
-    if (!cfg->keep_intermediate) unlink(obj_template);
+    int rc = link_object(obj_path, output_path, cfg);
+    if (!cfg->keep_intermediate) remove(obj_path);
     return rc;
 }
 
@@ -278,13 +280,11 @@ int forge_driver_compile_library(Program *prog, const char *output_a, const char
     codegen_emit_library(prog, NULL, out_h, "forge_runtime.h");
     fclose(out_h);
 
-    char obj_template[] = "/tmp/forge-lib-XXXXXX.o";
-    int obj_fd = mkstemps(obj_template, 2);
-    if (obj_fd < 0) return 1;
-    close(obj_fd);
+    char obj_path[PATH_MAX];
+    if (fr_make_temp_path(obj_path, sizeof(obj_path), "forge-lib", ".o") != 0) return 1;
 
-    if (compile_c_source(prog, obj_template, cfg, emit_library_c) != 0) {
-        unlink(obj_template);
+    if (compile_c_source(prog, obj_path, cfg, emit_library_c) != 0) {
+        remove(obj_path);
         return 1;
     }
 
@@ -293,9 +293,9 @@ int forge_driver_compile_library(Program *prog, const char *output_a, const char
     argv_push(&args, "ar");
     argv_push(&args, "rcs");
     argv_push(&args, (char *)output_a);
-    argv_push(&args, obj_template);
+    argv_push(&args, obj_path);
     int rc = exec_argv(&args);
     argv_free(&args);
-    if (!cfg->keep_intermediate) unlink(obj_template);
+    if (!cfg->keep_intermediate) remove(obj_path);
     return rc;
 }
