@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 typedef struct {
     int64_t sock;
@@ -113,10 +115,33 @@ static void parse_http_request(const char *raw, fr_http_req_t *req) {
     }
 }
 
+static char *tcp_recv_until_headers(int64_t sock) {
+    if (sock < 0) return NULL;
+    size_t cap = 4096, len = 0;
+    char *buf = (char *)malloc(cap);
+    if (!buf) return NULL;
+    for (;;) {
+        if (len + 1 >= cap) {
+            cap *= 2;
+            char *nbuf = (char *)realloc(buf, cap);
+            if (!nbuf) { free(buf); return NULL; }
+            buf = nbuf;
+        }
+        ssize_t n = recv((int)sock, buf + len, cap - len - 1, 0);
+        if (n < 0) { free(buf); return NULL; }
+        if (n == 0) break;
+        len += (size_t)n;
+        buf[len] = '\0';
+        if (strstr(buf, "\r\n\r\n")) break;
+    }
+    buf[len] = '\0';
+    return buf;
+}
+
 int64_t fr_http_accept(int64_t server) {
     int64_t client = fr_tcp_accept(server);
     if (client < 0 || client >= 128) return -1;
-    char *raw = fr_tcp_recv(client);
+    char *raw = tcp_recv_until_headers(client);
     g_reqs[client].sock = client;
     parse_http_request(raw ? raw : "", &g_reqs[client]);
     free(raw);

@@ -14,6 +14,10 @@ static const ForgeStdFn STRING_FNS[] = {
     {"str_sub", "fr_str_sub"},
     {"str_contains", "fr_str_contains"},
     {"str_trim", "fr_str_trim"},
+    {"str_char_at", "fr_str_char_at"},
+    {"str_append", "fr_str_append"},
+    {"str_append_str", "fr_str_append_str"},
+    {"str_from_int", "fr_str_from_int"},
 };
 
 static const ForgeStdFn MATH_FNS[] = {
@@ -84,7 +88,7 @@ static const ForgeStdFn JSON_FNS[] = {
 
 static const ForgeModule MODULES[] = {
     { .name = { "io", 2 }, .header = "forge/io.h", .fns = IO_FNS, .fn_count = 3 },
-    { .name = { "strings", 7 }, .header = "forge/string.h", .fns = STRING_FNS, .fn_count = 6 },
+    { .name = { "strings", 7 }, .header = "forge/string.h", .fns = STRING_FNS, .fn_count = 10 },
     { .name = { "math", 4 }, .header = "forge/math.h", .fns = MATH_FNS, .fn_count = 6 },
     { .name = { "time", 4 }, .header = "forge/time.h", .fns = TIME_FNS, .fn_count = 2 },
     { .name = { "fs", 2 }, .header = "forge/fs.h", .fns = FS_FNS, .fn_count = 4 },

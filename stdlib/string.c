@@ -1,5 +1,6 @@
 #include "forge/string.h"
 #include <ctype.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -60,4 +61,31 @@ char *fr_str_trim(const char *s) {
     memcpy(out, s, len);
     out[len] = '\0';
     return out;
+}
+
+int64_t fr_str_char_at(const char *s, int64_t i) {
+    if (!s || i < 0) return -1;
+    size_t len = strlen(s);
+    if ((size_t)i >= len) return -1;
+    return (unsigned char)s[i];
+}
+
+char *fr_str_append(const char *s, int64_t ch) {
+    size_t len = s ? strlen(s) : 0;
+    char *out = (char *)malloc(len + 2);
+    if (!out) return NULL;
+    if (len) memcpy(out, s, len);
+    out[len] = (char)ch;
+    out[len + 1] = '\0';
+    return out;
+}
+
+char *fr_str_append_str(const char *s, const char *t) {
+    return fr_str_concat(s, t);
+}
+
+char *fr_str_from_int(int64_t n) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%lld", (long long)n);
+    return fr_str_concat(buf, "");
 }
