@@ -1,25 +1,25 @@
 # Hylo
 
-**Hybrid Lightweight Process + Coroutine** 언어 — Elixir/Erlang 스타일 경량 프로세스와 코루틴을 결합한 AOT 컴파일 언어입니다.
+A **Hybrid Lightweight Process + Coroutine** language — an AOT-compiled language that combines Elixir/Erlang-style lightweight processes with coroutines.
 
-Hylo 소스(`.hy`)는 C 코드로 컴파일된 뒤 네이티브 바이너리로 빌드됩니다. GC 없이 예측 가능한 실행 모델을 목표로 합니다.
+Hylo source (`.hy`) is compiled to C and then built into native binaries. It targets a predictable execution model without a garbage collector.
 
-## 특징
+## Features
 
-- **Light Process** — 상태 소유·격리·장애 복구 단위 (`process`)
-- **Coroutine** — 프로세스 내부 경량 실행 흐름 (`coroutine`, `spawn`, `yield`)
-- **AOT 컴파일** — `.hy` → `.c` → 네이티브 바이너리
-- **표준 모듈** — I/O, 문자열, 수학, 파일, TCP/UDP, HTTP, JSON
-- **사용자 라이브러리** — `library` / `export` / `import`로 정적 라이브러리 빌드
-- **Supervisor** — Elixir 스타일 장애 복구 정책
+- **Light Process** — unit for state ownership, isolation, and fault recovery (`process`)
+- **Coroutine** — lightweight execution flows inside a process (`coroutine`, `spawn`, `yield`)
+- **AOT compilation** — `.hy` → `.c` → native binary
+- **Standard modules** — I/O, strings, math, files, TCP/UDP, HTTP, JSON
+- **User libraries** — build static libraries with `library` / `export` / `import`
+- **Supervisor** — Elixir-style fault-recovery policies
 
-## 요구 사항
+## Requirements
 
-- GCC 또는 Clang (C11)
+- GCC or Clang (C11)
 - CMake 3.16+
-- Linux (네트워킹 모듈은 POSIX 소켓 기준)
+- Linux (networking modules use POSIX sockets)
 
-## 빌드
+## Build
 
 ```bash
 git clone https://github.com/Helloworld0822/hylo.git
@@ -29,7 +29,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-## 실행
+## Run
 
 ```bash
 ./build/bin/hello
@@ -37,10 +37,10 @@ cmake --build build
 ./build/bin/stdlib_demo
 ./build/bin/use_library
 ./build/bin/http_server   # curl http://127.0.0.1:8080
-./build/bin/tcp_echo      # 포트 9000
+./build/bin/tcp_echo      # port 9000
 ```
 
-## 언어 예시
+## Language Example
 
 ```hylo
 process main {
@@ -55,12 +55,12 @@ process main {
 }
 ```
 
-## 표준 모듈
+## Standard Modules
 
-`import`로 사용합니다. 표준 모듈은 `libhylo_std`에 포함됩니다.
+Import modules with `import`. Standard modules are included in `libhylo_std`.
 
-| 모듈 | 설명 |
-|------|------|
+| Module | Description |
+|--------|-------------|
 | `io` | `print`, `eprint`, `eprintln` |
 | `strings` | `str_len`, `str_concat`, `str_eq`, … |
 | `math` | `abs_i`, `min_i`, `max_i`, `pow_i`, … |
@@ -82,9 +82,9 @@ process main {
 }
 ```
 
-## 사용자 라이브러리
+## User Libraries
 
-### 라이브러리 정의
+### Define a Library
 
 ```hylo
 library greeting {
@@ -96,14 +96,14 @@ library greeting {
 }
 ```
 
-### 컴파일
+### Compile
 
 ```bash
 ./build/bin/hylo --lib libs/greeting/greeting.hy \
     -o greeting.c --header greeting.h
 ```
 
-### 사용
+### Use
 
 ```hylo
 import greeting;
@@ -113,44 +113,44 @@ process main {
 }
 ```
 
-CMake에서는 `cmake/HyloLibrary.cmake`의 `hylo_add_library()`를 사용합니다.
+With CMake, use `hylo_add_library()` from `cmake/HyloLibrary.cmake`.
 
-## 프로젝트 구조
+## Project Structure
 
 ```
 hylo/
-├── compiler/       # Hylo 컴파일러 (lexer, parser, codegen)
-├── runtime/        # 프로세스·코루틴·스케줄러
-├── stdlib/         # 표준 모듈 C 구현
-├── include/        # 런타임 및 stdlib 헤더
-├── libs/           # 사용자 라이브러리 예제
-├── examples/       # 예제 프로그램
-├── cmake/          # CMake 헬퍼
-└── docs/           # 설계 문서
+├── compiler/       # Hylo compiler (lexer, parser, codegen)
+├── runtime/        # processes, coroutines, scheduler
+├── stdlib/         # standard module C implementations
+├── include/        # runtime and stdlib headers
+├── libs/           # sample user libraries
+├── examples/       # example programs
+├── cmake/          # CMake helpers
+└── docs/           # design documents
 ```
 
-## 컴파일러 사용법
+## Compiler Usage
 
 ```bash
-# 실행 파일용 C 생성
+# Generate C for an executable
 hylo app.hy -o app.c
 
-# 라이브러리용 C + 헤더 생성
+# Generate C + header for a library
 hylo --lib lib.hy -o lib.c --header lib.h
 ```
 
-## 기여
+## Contributing
 
-이슈와 PR을 환영합니다.
+Issues and pull requests are welcome.
 
-1. Fork 후 브랜치 생성
-2. 변경 사항 커밋
-3. PR 제출
+1. Fork the repository and create a branch
+2. Commit your changes
+3. Open a pull request
 
-## 라이선스
+## License
 
-[MIT License](LICENSE) — 자유롭게 사용·수정·배포할 수 있습니다.
+[MIT License](LICENSE) — free to use, modify, and distribute.
 
-## 설계 문서
+## Design Docs
 
-자세한 실행 모델과 설계 방향은 [docs/first.md](docs/first.md)를 참고하세요.
+For the execution model and design goals, see [docs/first.md](docs/first.md).
