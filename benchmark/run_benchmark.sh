@@ -14,6 +14,7 @@ AXUM_PORT=19083
 REQUESTS=1000000
 CONCURRENCY=1000
 RESULTS="${ROOT}/benchmark/results.txt"
+CPU_COUNT="$(nproc 2>/dev/null || echo 1)"
 
 mkdir -p "$(dirname "$RESULTS")"
 
@@ -81,13 +82,97 @@ PY
     fi
 }
 
+pids_on_port() {
+    local port="$1"
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null | sort -u
+    elif command -v ss >/dev/null 2>&1; then
+        ss -tlnp "sport = :${port}" 2>/dev/null | grep -oP 'pid=\K[0-9]+' | sort -u
+    else
+        fuser "${port}/tcp" 2>/dev/null | tr ' ' '\n' | sort -u
+    fi
+}
+
+sample_server_resources() {
+    local port="$1"
+    local pids
+    pids="$(pids_on_port "$port" | tr '\n' ' ')"
+    if [[ -z "${pids// }" ]]; then
+        echo "0 0"
+        return
+    fi
+
+    local total_rss_kb=0
+    local total_cpu=0
+    for pid in $pids; do
+        [[ -r "/proc/${pid}/status" ]] || continue
+        local rss_kb cpu_pct
+        rss_kb="$(awk '/VmRSS/{print $2}' "/proc/${pid}/status" 2>/dev/null || echo 0)"
+        cpu_pct="$(ps -p "$pid" -o %cpu= 2>/dev/null | tr -d ' ,' || echo 0)"
+        total_rss_kb=$((total_rss_kb + rss_kb))
+        total_cpu="$(awk -v a="$total_cpu" -v b="${cpu_pct:-0}" 'BEGIN{printf "%.2f", a + b}')"
+    done
+    echo "$total_rss_kb $total_cpu"
+}
+
+start_resource_monitor() {
+    local port="$1"
+    local log="$2"
+    : >"$log"
+    (
+        while true; do
+            read -r rss_kb cpu_pct < <(sample_server_resources "$port")
+            printf '%s %s %s\n' "$(date +%s.%N)" "${rss_kb:-0}" "${cpu_pct:-0}" >>"$log"
+            sleep 1
+        done
+    ) &
+    echo $!
+}
+
+print_resource_summary() {
+    local log="$1"
+    if [[ ! -s "$log" ]]; then
+        echo "Peak RSS:      n/a"
+        echo "Avg CPU:       n/a (${CPU_COUNT} cores available)"
+        echo "Peak CPU:      n/a"
+        return
+    fi
+
+    awk -v cores="$CPU_COUNT" '
+        NR > 0 {
+            rss = $2 / 1024
+            cpu = $3
+            if (rss > peak_rss) peak_rss = rss
+            if (cpu > peak_cpu) peak_cpu = cpu
+            cpu_sum += cpu
+            n++
+        }
+        END {
+            if (n == 0) {
+                print "Peak RSS:      n/a"
+                print "Avg CPU:       n/a (" cores " cores available)"
+                print "Peak CPU:      n/a"
+            } else {
+                printf "Peak RSS:      %.1f MB\n", peak_rss
+                printf "Avg CPU:       %.1f%% (%d cores, %.1f%% of total capacity)\n", cpu_sum / n, cores, (cpu_sum / n) / cores
+                printf "Peak CPU:      %.1f%%\n", peak_cpu
+            }
+        }
+    ' "$log"
+}
+
 bench_one() {
     local name="$1" port="$2" cmd=("${@:3}")
     echo "=== $name (port $port) ==="
-    "${cmd[@]}" &
+    # Use all CPU cores for the server process tree.
+    if command -v taskset >/dev/null 2>&1; then
+        taskset -c "0-$((CPU_COUNT - 1))" "${cmd[@]}" &
+    else
+        "${cmd[@]}" &
+    fi
     local pid=$!
     local ready=0
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
         if curl -sf "http://127.0.0.1:${port}/" >/dev/null; then
             ready=1
             break
@@ -100,9 +185,22 @@ bench_one() {
         wait "$pid" 2>/dev/null || true
         return 1
     fi
+
+    local res_log
+    res_log="$(mktemp)"
+    local mon_pid
+    mon_pid="$(start_resource_monitor "$port" "$res_log")"
     run_load "http://127.0.0.1:${port}/"
+    kill "$mon_pid" 2>/dev/null || true
+    wait "$mon_pid" 2>/dev/null || true
+    print_resource_summary "$res_log"
+    rm -f "$res_log"
+
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
+    # Ensure the port is free before the next server starts.
+    fuser -k "${port}/tcp" 2>/dev/null || true
+    sleep 1
     echo
 }
 
@@ -110,8 +208,10 @@ bench_one() {
     echo "Forge vs Python vs Phoenix vs Rust Axum HTTP Benchmark"
     echo "Date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
     echo "Host: $(uname -srm)"
+    echo "CPU cores: $CPU_COUNT"
     echo "Requests: $REQUESTS, Concurrency: $CONCURRENCY"
     echo "Body: Hello, World (13 bytes)"
+    echo "Server affinity: all cores (taskset 0-$((CPU_COUNT - 1)))"
     echo
 
     if [[ ! -x "$FORGE_BIN" ]]; then
@@ -130,7 +230,7 @@ bench_one() {
     bench_one "Forge (AOT native)" "$FORGE_PORT" "$FORGE_BIN"
     bench_one "Python 3 (socket)" "$PY_PORT" python3 "$PY_SERVER"
     bench_one "Phoenix (Bandit)" "$PHX_PORT" env PORT="$PHX_PORT" "$PHX_SERVER"
-    bench_one "Rust (Axum)" "$AXUM_PORT" env PORT="$AXUM_PORT" "$AXUM_SERVER"
+    bench_one "Rust (Axum)" "$AXUM_PORT" env PORT="$AXUM_PORT" CARGO_TARGET_DIR= "$AXUM_SERVER"
 } | tee "$RESULTS"
 
 echo "Results saved to $RESULTS"

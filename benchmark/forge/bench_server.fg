@@ -1,4 +1,4 @@
-// Benchmark: REUSEPORT accept workers + sharded connection thread pool (threads=0 → auto)
+// Benchmark: one REUSEPORT accept worker per CPU core (threads=0 → auto)
 
 import http;
 

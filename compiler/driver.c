@@ -51,6 +51,12 @@ static void argv_add_opt(Argv *a, int opt_level) {
     argv_push(a, strdup(opt));
 }
 
+static void argv_add_lto(Argv *a) {
+#if !defined(FORGE_OS_WINDOWS)
+    argv_push(a, strdup("-flto"));
+#endif
+}
+
 static void argv_add_includes(Argv *a, const ForgeDriverConfig *cfg) {
     if (cfg->include_dir) {
         size_t n = strlen(cfg->include_dir) + 3;
@@ -115,6 +121,7 @@ static int compile_c_source(Program *prog, const char *obj_path, const ForgeDriv
     argv_push(&args, (char *)cfg->cc);
     argv_push(&args, "-std=c11");
     argv_add_opt(&args, cfg->opt_level > 0 ? cfg->opt_level : 3);
+    if (cfg->opt_level > 0) argv_add_lto(&args);
     argv_add_includes(&args, cfg);
     argv_push(&args, "-c");
     argv_push(&args, cpath);
@@ -138,6 +145,7 @@ static int link_object(const char *obj_path, const char *output_path, const Forg
     argv_push(&args, (char *)obj_path);
     argv_push(&args, "-o");
     argv_push(&args, (char *)output_path);
+    if (cfg->opt_level > 0) argv_add_lto(&args);
     if (cfg->lib_dir) {
         size_t n = strlen(cfg->lib_dir) + 3;
         char *libdir = (char *)malloc(n);

@@ -9,6 +9,12 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
+include(CheckIPOSupported)
+check_ipo_supported(RESULT FORGE_IPO_SUPPORTED OUTPUT FORGE_IPO_ERROR)
+if(FORGE_IPO_SUPPORTED)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+endif()
+
 if(MSVC)
     add_compile_options(/W4)
 else()
