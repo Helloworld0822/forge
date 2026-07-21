@@ -1,5 +1,10 @@
 # Forge
 
+> **Project home moved:** Development continues under the [forge-language](https://github.com/forge-language) organization:
+> [forge](https://github.com/forge-language/forge) · [language-server](https://github.com/forge-language/language-server) · [vscode-extension](https://github.com/forge-language/vscode-extension)
+>
+> This repository is the original monorepo and may lag behind the split repositories.
+
 A **Hybrid Lightweight Process + Coroutine** language — an AOT-compiled language that combines Elixir/Erlang-style lightweight processes with coroutines.
 
 Forge source (`.fg`) is compiled directly to native binaries. The compiler streams generated code to `clang` in memory — no `.c` files are written unless you pass `--emit-c`.
