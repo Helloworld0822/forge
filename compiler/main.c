@@ -8,7 +8,7 @@
 #include "optimize.h"
 #include "module_loader.h"
 #include "driver.h"
-#include "module_loader.h"
+#include "symbols.h"
 
 static char *read_file(const char *path, size_t *out_len) {
     FILE *f = fopen(path, "rb");
@@ -41,6 +41,8 @@ static void usage(const char *prog) {
     fprintf(stderr, "  -I PATH            Extra include directory (also searches for .fg modules)\n");
     fprintf(stderr, "  -l NAME             Link libforge_NAME.a (repeatable)\n");
     fprintf(stderr, "  --cc PATH          C compiler for native output (default: CC, clang, gcc, or cc)\n");
+    fprintf(stderr, "  --check            Parse only; exit 0 on success (for LSP / CI)\n");
+    fprintf(stderr, "  --symbols-json     Print document symbols as JSON to stdout\n");
     fprintf(stderr, "  --keep-temp        Keep intermediate object files\n");
 }
 
@@ -51,6 +53,8 @@ int main(int argc, char **argv) {
     }
 
     bool lib_mode = false;
+    bool check_only = false;
+    bool symbols_json = false;
     const char *input = NULL;
     const char *output = NULL;
     const char *header = NULL;
@@ -80,6 +84,10 @@ int main(int argc, char **argv) {
             cfg.lib_dir = argv[++i];
         } else if (strcmp(argv[i], "--cc") == 0 && i + 1 < argc) {
             cfg.cc = argv[++i];
+        } else if (strcmp(argv[i], "--check") == 0) {
+            check_only = true;
+        } else if (strcmp(argv[i], "--symbols-json") == 0) {
+            symbols_json = true;
         } else if (strcmp(argv[i], "--keep-temp") == 0) {
             cfg.keep_intermediate = true;
         } else if (strcmp(argv[i], "-I") == 0 && i + 1 < argc) {
@@ -120,6 +128,18 @@ int main(int argc, char **argv) {
     };
     forge_load_modules(&prog, &mcfg);
     optimize_program(&prog);
+
+    if (symbols_json) {
+        forge_emit_symbols_json(&prog, stdout);
+        program_free(&prog);
+        free(src);
+        return 0;
+    }
+    if (check_only) {
+        program_free(&prog);
+        free(src);
+        return 0;
+    }
 
     int rc = 0;
     if (lib_mode) {

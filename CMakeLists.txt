@@ -63,6 +63,7 @@ add_executable(forge
     compiler/codegen.c
     compiler/mod_registry.c
     compiler/module_loader.c
+    compiler/symbols.c
     compiler/optimize.c
     compiler/driver.c
 )
