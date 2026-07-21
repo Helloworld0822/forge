@@ -1,0 +1,6 @@
+{
+  "forge.path": "${workspaceFolder}/build/bin/forge",
+  "forge.forgeRoot": "${workspaceFolder}",
+  "forge.libDir": "${workspaceFolder}/build/lib",
+  "forge.includePaths": ["${workspaceFolder}/examples"]
+}

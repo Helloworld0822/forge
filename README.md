@@ -314,6 +314,20 @@ process main {
 
 With CMake, use `forge_add_library()` from `cmake/ForgeLibrary.cmake`.
 
+## Language Server (LSP)
+
+Editor support for `.fg` files — syntax highlighting, diagnostics, completion, hover, and document symbols.
+
+See [docs/lsp.md](docs/lsp.md) for setup. Quick start:
+
+```bash
+cmake --build build
+cd lsp && npm install && npm run build
+cd ../editors/vscode && npm install && npm run build
+```
+
+Then install the extension from `editors/vscode/` in VS Code or Cursor.
+
 ## Project Structure
 
 ```
@@ -330,7 +344,9 @@ forge/
 │   ├── phoenix/    # Phoenix (Bandit) benchmark server
 │   └── axum/       # Rust Axum benchmark server
 ├── cmake/          # CMake helpers
-└── docs/           # design documents
+├── lsp/            # TypeScript language server
+├── editors/vscode/ # VS Code / Cursor extension
+└── docs/           # design documents and tutorials
 ```
 
 ## Compiler Usage

@@ -7,6 +7,8 @@ build/
 .vscode/*
 !.vscode/settings.json
 !.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
 .idea/
 *.swp
 *~
@@ -39,3 +41,10 @@ benchmark/results.txt
 # Local practice builds
 practice/a.out
 practice/*.o
+
+# Node / LSP
+lsp/node_modules/
+lsp/out/
+editors/vscode/node_modules/
+editors/vscode/out/
+editors/vscode/server/
