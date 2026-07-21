@@ -115,18 +115,21 @@ sample_server_resources() {
     echo "$total_rss_kb $total_cpu"
 }
 
+RESOURCE_MON_PID=""
+
 start_resource_monitor() {
     local port="$1"
     local log="$2"
     : >"$log"
     (
         while true; do
-            read -r rss_kb cpu_pct < <(sample_server_resources "$port")
-            printf '%s %s %s\n' "$(date +%s.%N)" "${rss_kb:-0}" "${cpu_pct:-0}" >>"$log"
+            # Avoid "read < <(cmd)" inside a background subshell — it can hang bash.
+            set -- $(sample_server_resources "$port")
+            printf '%s %s %s\n' "$(date +%s.%N)" "${1:-0}" "${2:-0}" >>"$log"
             sleep 1
         done
     ) &
-    echo $!
+    RESOURCE_MON_PID=$!
 }
 
 print_resource_summary() {
@@ -188,9 +191,9 @@ bench_one() {
 
     local res_log
     res_log="$(mktemp)"
-    local mon_pid
-    mon_pid="$(start_resource_monitor "$port" "$res_log")"
-    run_load "http://127.0.0.1:${port}/"
+    start_resource_monitor "$port" "$res_log"
+    local mon_pid="$RESOURCE_MON_PID"
+    PYTHONUNBUFFERED=1 run_load "http://127.0.0.1:${port}/"
     kill "$mon_pid" 2>/dev/null || true
     wait "$mon_pid" 2>/dev/null || true
     print_resource_summary "$res_log"
