@@ -275,6 +275,19 @@ Import modules with `import`. Standard modules are included in `libforge_std`.
 | `http` | `http_get`, `http_listen`, `http_prepare`, `http_serve_mt`, … |
 | `event` | `event_poll`, `event_add_read` (epoll integration) |
 | `json` | `json_get_string`, `json_get_int`, … |
+| `gpu` | `gpu_available`, `gpu_alloc`, `gpu_add_i32`, `gpu_mul_i32`, `gpu_run_kernel`, … (OpenCL) |
+
+```forge
+import gpu;
+
+native main {
+    if (gpu_available() == 0) { return 0; }
+    gpu_select_device(0);
+    let buf: int = gpu_alloc(4096);
+    gpu_fill_i32(buf, 42, 1024);
+    gpu_free(buf);
+}
+```
 
 ```forge
 import io;

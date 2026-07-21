@@ -118,6 +118,7 @@ static int cg_stdlib_returns_string(Codegen *cg, ForgeStr name) {
         "fr_http_req_method", "fr_http_req_path", "fr_http_req_body",
         "fr_json_get_string", "fr_json_stringify_str", "fr_json_stringify_int",
         "fr_udp_peer", "fr_os_getenv", "fr_os_argv",
+        "fr_gpu_backend", "fr_gpu_device_name",
         "fr_str_append", "fr_str_append_str", "fr_str_from_int", NULL
     };
     for (int i = 0; str_fns[i]; i++) {

@@ -121,7 +121,7 @@ static int compile_c_source(Program *prog, const char *obj_path, const ForgeDriv
     argv_push(&args, (char *)cfg->cc);
     argv_push(&args, "-std=c11");
     argv_add_opt(&args, cfg->opt_level > 0 ? cfg->opt_level : 3);
-    if (cfg->opt_level > 0) argv_add_lto(&args);
+    if (cfg->opt_level > 0 && getenv("FORGE_ENABLE_LTO")) argv_add_lto(&args);
     argv_add_includes(&args, cfg);
     argv_push(&args, "-c");
     argv_push(&args, cpath);
@@ -138,6 +138,26 @@ static void emit_program(Program *prog, FILE *out, const char *runtime_include) 
     codegen_emit(prog, out, runtime_include);
 }
 
+static void argv_add_link_extras(Argv *a, const ForgeDriverConfig *cfg) {
+    if (!cfg->lib_dir) return;
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "%s/forge.link", cfg->lib_dir);
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    char line[512];
+    while (fgets(line, sizeof(line), f)) {
+        char *p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        char *end = p + strlen(p);
+        while (end > p && (end[-1] == '\n' || end[-1] == '\r' || end[-1] == ' ')) *--end = '\0';
+        if (!p[0] || p[0] == '#') continue;
+        char *save = NULL;
+        for (char *tok = strtok_r(p, " \t", &save); tok; tok = strtok_r(NULL, " \t", &save))
+            argv_push(a, strdup(tok));
+    }
+    fclose(f);
+}
+
 static int link_object(const char *obj_path, const char *output_path, const ForgeDriverConfig *cfg) {
     Argv args;
     argv_init(&args);
@@ -145,7 +165,6 @@ static int link_object(const char *obj_path, const char *output_path, const Forg
     argv_push(&args, (char *)obj_path);
     argv_push(&args, "-o");
     argv_push(&args, (char *)output_path);
-    if (cfg->opt_level > 0) argv_add_lto(&args);
     if (cfg->lib_dir) {
         size_t n = strlen(cfg->lib_dir) + 3;
         char *libdir = (char *)malloc(n);
@@ -160,6 +179,7 @@ static int link_object(const char *obj_path, const char *output_path, const Forg
     }
     argv_push(&args, "-lforge_std");
     argv_push(&args, "-lforge_runtime");
+    argv_add_link_extras(&args, cfg);
     argv_push(&args, "-lm");
     int rc = exec_argv(&args);
     argv_free(&args);

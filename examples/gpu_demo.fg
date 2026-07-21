@@ -1,0 +1,47 @@
+// GPU vector add demo — requires OpenCL (NVIDIA/AMD/Intel GPU or CPU fallback).
+
+import io;
+import gpu;
+
+native main {
+    if (gpu_available() == 0) {
+        print("GPU not available (build with OpenCL or install GPU drivers)");
+        return 0;
+    }
+
+    print("Backend: ");
+    print(gpu_backend());
+    print("\nDevice: ");
+    print(gpu_device_name(0));
+    print("\n");
+    gpu_select_device(0);
+
+    let n: int = 1024;
+    let bytes: int = n * 4;
+    let a: int = gpu_alloc(bytes);
+    let b: int = gpu_alloc(bytes);
+    let c: int = gpu_alloc(bytes);
+
+    gpu_fill_i32(a, 1, n);
+    gpu_fill_i32(b, 2, n);
+    gpu_add_i32(a, b, c, n);
+    gpu_sync();
+
+    print("c[0] = ");
+    print_int(gpu_read_i32(c, 0));
+    print(" (expect 3)");
+
+    print("c[1023] = ");
+    print_int(gpu_read_i32(c, 1023));
+    print(" (expect 3)");
+
+    gpu_mul_i32(c, b, a, n);
+    gpu_sync();
+    print("a[0] after mul = ");
+    print_int(gpu_read_i32(a, 0));
+    print(" (expect 6)");
+
+    gpu_free(a);
+    gpu_free(b);
+    gpu_free(c);
+}

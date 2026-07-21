@@ -119,6 +119,24 @@ static const ForgeStdFn JSON_FNS[] = {
     {"json_stringify_int", "fr_json_stringify_int"},
 };
 
+static const ForgeStdFn GPU_FNS[] = {
+    {"gpu_available", "fr_gpu_available"},
+    {"gpu_backend", "fr_gpu_backend"},
+    {"gpu_device_count", "fr_gpu_device_count"},
+    {"gpu_device_name", "fr_gpu_device_name"},
+    {"gpu_select_device", "fr_gpu_select_device"},
+    {"gpu_alloc", "fr_gpu_alloc"},
+    {"gpu_free", "fr_gpu_free"},
+    {"gpu_copy", "fr_gpu_copy"},
+    {"gpu_sync", "fr_gpu_sync"},
+    {"gpu_fill_i32", "fr_gpu_fill_i32"},
+    {"gpu_write_i32", "fr_gpu_write_i32"},
+    {"gpu_read_i32", "fr_gpu_read_i32"},
+    {"gpu_add_i32", "fr_gpu_add_i32"},
+    {"gpu_mul_i32", "fr_gpu_mul_i32"},
+    {"gpu_run_kernel", "fr_gpu_run_kernel"},
+};
+
 static const ForgeModule MODULES[] = {
     { .name = { "io", 2 }, .header = "forge/io.h", .fns = IO_FNS, .fn_count = 17 },
     { .name = { "strings", 7 }, .header = "forge/string.h", .fns = STRING_FNS, .fn_count = 11 },
@@ -131,6 +149,7 @@ static const ForgeModule MODULES[] = {
     { .name = { "http", 4 }, .header = "forge/http.h", .fns = HTTP_FNS, .fn_count = 15 },
     { .name = { "event", 5 }, .header = "forge/event.h", .fns = EVENT_FNS, .fn_count = 2 },
     { .name = { "json", 4 }, .header = "forge/json.h", .fns = JSON_FNS, .fn_count = 4 },
+    { .name = { "gpu", 3 }, .header = "forge/gpu.h", .fns = GPU_FNS, .fn_count = 15 },
 };
 
 const ForgeModule *forge_std_module(ForgeStr name) {

@@ -9,9 +9,11 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
+option(FORGE_ENABLE_LTO "Enable link-time optimization for forge_std/runtime" OFF)
+
 include(CheckIPOSupported)
 check_ipo_supported(RESULT FORGE_IPO_SUPPORTED OUTPUT FORGE_IPO_ERROR)
-if(FORGE_IPO_SUPPORTED)
+if(FORGE_ENABLE_LTO AND FORGE_IPO_SUPPORTED)
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
 endif()
 
@@ -27,6 +29,8 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 set(FORGE_CC_ARGS --cc "${CMAKE_C_COMPILER}")
 
+option(FORGE_ENABLE_GPU "Enable OpenCL GPU stdlib (gpu module)" ON)
+
 add_library(forge_std STATIC
     stdlib/io.c
     stdlib/string.c
@@ -38,11 +42,36 @@ add_library(forge_std STATIC
     stdlib/udp.c
     stdlib/http.c
     stdlib/json.c
+    stdlib/gpu.c
     runtime/arena.c
 )
 target_include_directories(forge_std PUBLIC include)
 if(NOT WIN32)
     target_link_libraries(forge_std PUBLIC pthread)
+endif()
+
+if(FORGE_ENABLE_GPU)
+    find_package(OpenCL)
+    if(NOT OpenCL_FOUND)
+        find_path(OpenCL_INCLUDE_DIR NAMES CL/cl.h OpenCL/cl.h
+            PATHS "${CMAKE_SOURCE_DIR}/third_party/opencl")
+        find_library(OpenCL_LIBRARY NAMES OpenCL OpenCL.so.1)
+        if(OpenCL_INCLUDE_DIR AND OpenCL_LIBRARY)
+            set(OpenCL_FOUND TRUE)
+            set(OpenCL_INCLUDE_DIRS "${OpenCL_INCLUDE_DIR}")
+            set(OpenCL_LIBRARIES "${OpenCL_LIBRARY}")
+        endif()
+    endif()
+    if(OpenCL_FOUND)
+        message(STATUS "Forge GPU: OpenCL enabled (${OpenCL_LIBRARIES})")
+        target_compile_definitions(forge_std PRIVATE FORGE_HAS_OPENCL=1)
+        target_include_directories(forge_std PRIVATE ${OpenCL_INCLUDE_DIRS})
+        target_link_libraries(forge_std PUBLIC ${OpenCL_LIBRARIES})
+        file(WRITE "${CMAKE_BINARY_DIR}/lib/forge.link" "${OpenCL_LIBRARIES}\n")
+    else()
+        message(STATUS "Forge GPU: OpenCL not found — gpu module will report unavailable at runtime")
+        file(WRITE "${CMAKE_BINARY_DIR}/lib/forge.link" "")
+    endif()
 endif()
 
 add_library(forge_runtime STATIC
